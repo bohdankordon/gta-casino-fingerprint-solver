@@ -6,7 +6,15 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 
-/** Immutable outcome of recognizing one eight-candidate puzzle. Candidate indices are zero-based. */
+/**
+ * Immutable outcome of recognizing one eight-candidate puzzle. Candidate indices are zero-based.
+ *
+ * <p>{@code confidence} is deterministic structural evidence strength in {@code [0, 1]},
+ * not a calibrated probability: it summarizes how strong the underlying structural
+ * similarities are and carries no false-positive rate or correctness probability. The
+ * {@code status} is authoritative; a high evidence strength never overrides failed
+ * ambiguity gates on its own.
+ */
 public final class RecognitionResult {
     public enum Status {
         RECOGNIZED,
