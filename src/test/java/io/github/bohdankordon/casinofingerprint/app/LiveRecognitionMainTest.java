@@ -2,6 +2,7 @@ package io.github.bohdankordon.casinofingerprint.app;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.bohdankordon.casinofingerprint.capture.CaptureException;
@@ -11,16 +12,27 @@ import io.github.bohdankordon.casinofingerprint.capture.PhysicalDisplayMode;
 import io.github.bohdankordon.casinofingerprint.capture.Resolution;
 import io.github.bohdankordon.casinofingerprint.capture.ScreenBounds;
 import io.github.bohdankordon.casinofingerprint.capture.ScreenCapture;
+import io.github.bohdankordon.casinofingerprint.dataset.ReferenceAssetType;
+import io.github.bohdankordon.casinofingerprint.dataset.ReferenceCrop;
+import io.github.bohdankordon.casinofingerprint.dataset.ReferenceLayout;
+import io.github.bohdankordon.casinofingerprint.gameplay.GameplayFixture;
+import io.github.bohdankordon.casinofingerprint.matching.ReferenceFingerprintLibrary;
+import io.github.bohdankordon.casinofingerprint.model.FingerprintId;
 import io.github.bohdankordon.casinofingerprint.runtime.FakeScreenCapture;
 import io.github.bohdankordon.casinofingerprint.runtime.Stage5TestSupport;
 import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.IOException;
 import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import org.bytedeco.opencv.opencv_core.Mat;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 /**
  * End-to-end command line of the recognition-only runtime against fake monitors and a fake
@@ -184,6 +196,98 @@ class LiveRecognitionMainTest {
         assertEquals(0, run.factory.captureCount(), "Nothing is captured");
     }
 
+    /**
+     * Reference data is setup input: when a canonical Stage 1 asset cannot be decoded, the run must
+     * end with one SETUP_ERROR diagnostic and exit code 3. Nothing is captured, no recognition
+     * status is printed, and no exception escapes the run method.
+     */
+    @Test
+    void undecodableReferenceAssetIsReportedWithoutCapturing(@TempDir Path tempRoot) throws Exception {
+        Path projectRoot = projectRootWithUndecodableAsset(tempRoot);
+
+        TestRun run = new TestRun(new String[] {"--once"}, List.of(SCALED_TARGET),
+                FakeScreenCapture.create(), projectRoot);
+
+        int exit = run.exitCode();
+
+        assertEquals(3, exit, "Exit code");
+        String error = run.err();
+        assertTrue(error.contains("SETUP_ERROR"), "Setup diagnostic: " + error);
+        assertTrue(error.contains("could not load the reference library"), "Setup diagnostic: " + error);
+        assertTrue(error.contains("fragment_2.png"), "Undecodable asset named: " + error);
+        assertTrue(error.contains("decode"), "Library diagnostic preserved: " + error);
+        assertEquals(0, run.factory.captureCount(), "No frame is captured");
+        assertFalse(run.out().contains("status:"), "No recognition status is printed: " + run.out());
+        assertFalse(run.out().contains("RECOGNIZED") || run.out().contains("UNCERTAIN"),
+                "No decision is printed: " + run.out());
+    }
+
+    /** A malformed reference manifest is rejected the same way, before anything is captured. */
+    @Test
+    void malformedReferenceManifestIsReportedWithoutCapturing(@TempDir Path tempRoot) throws Exception {
+        Path projectRoot = projectRootWithMalformedManifest(tempRoot);
+
+        TestRun run = new TestRun(new String[] {"--once"}, List.of(SCALED_TARGET),
+                FakeScreenCapture.create(), projectRoot);
+
+        int exit = run.exitCode();
+
+        assertEquals(3, exit, "Exit code");
+        String error = run.err();
+        assertTrue(error.contains("SETUP_ERROR"), "Setup diagnostic: " + error);
+        assertTrue(error.contains("could not load the reference library"), "Setup diagnostic: " + error);
+        assertTrue(error.contains("manifest header"), "Manifest diagnostic preserved: " + error);
+        assertEquals(0, run.factory.captureCount(), "No frame is captured");
+        assertFalse(run.out().contains("status:"), "No recognition status is printed: " + run.out());
+    }
+
+    /**
+     * A project root with the real gameplay layout manifest and the real Stage 1 reference manifest
+     * whose canonical assets are all copied except one, which is replaced by bytes that are not a
+     * decodable image.
+     */
+    private static Path projectRootWithUndecodableAsset(Path tempRoot) throws IOException {
+        copyIntoProjectRoot(tempRoot, GameplayFixture.LAYOUT_REL);
+        copyIntoProjectRoot(tempRoot, ReferenceFingerprintLibrary.MANIFEST_REL);
+        List<ReferenceCrop> crops = ReferenceLayout.read(
+                Stage5TestSupport.PROJECT_ROOT.resolve(ReferenceFingerprintLibrary.MANIFEST_REL));
+        Path corrupted = null;
+        for (ReferenceCrop crop : crops) {
+            Path target = tempRoot.resolve(projectRelative(crop.outputPath()));
+            Files.createDirectories(target.getParent());
+            if (crop.fingerprintId() == FingerprintId.FP_3
+                    && crop.assetType() == ReferenceAssetType.FRAGMENT
+                    && crop.fragmentId() == 2) {
+                Files.writeString(target, "not a decodable image");
+                corrupted = target;
+            } else {
+                Files.copy(Stage5TestSupport.PROJECT_ROOT.resolve(projectRelative(crop.outputPath())),
+                        target);
+            }
+        }
+        assertNotNull(corrupted, "The manifest must reference the deliberately corrupted asset");
+        return tempRoot;
+    }
+
+    /** A project root whose Stage 1 manifest does not have the expected header. */
+    private static Path projectRootWithMalformedManifest(Path tempRoot) throws IOException {
+        copyIntoProjectRoot(tempRoot, GameplayFixture.LAYOUT_REL);
+        Path manifest = tempRoot.resolve(projectRelative(ReferenceFingerprintLibrary.MANIFEST_REL));
+        Files.createDirectories(manifest.getParent());
+        Files.writeString(manifest, "fingerprint_id,wherever" + System.lineSeparator());
+        return tempRoot;
+    }
+
+    private static void copyIntoProjectRoot(Path tempRoot, String repoRelative) throws IOException {
+        Path target = tempRoot.resolve(projectRelative(repoRelative));
+        Files.createDirectories(target.getParent());
+        Files.copy(Stage5TestSupport.PROJECT_ROOT.resolve(projectRelative(repoRelative)), target);
+    }
+
+    private static Path projectRelative(String repoRelative) {
+        return Path.of(repoRelative.replace('/', File.separatorChar));
+    }
+
     private static MonitorInfo monitor(int index, boolean primary, int logicalWidth, int logicalHeight,
             int physicalWidth, int physicalHeight) {
         return new MonitorInfo(
@@ -204,6 +308,10 @@ class LiveRecognitionMainTest {
         private final int exitCode;
 
         TestRun(String[] args, List<MonitorInfo> monitors, ScreenCapture capture) {
+            this(args, monitors, capture, Stage5TestSupport.PROJECT_ROOT);
+        }
+
+        TestRun(String[] args, List<MonitorInfo> monitors, ScreenCapture capture, Path projectRoot) {
             this.factory = new RecordingFactory(capture);
             this.exitCode = LiveRecognitionMain.run(
                     LiveRecognitionOptions.parse(args),
@@ -211,7 +319,7 @@ class LiveRecognitionMainTest {
                     err,
                     () -> monitors,
                     factory,
-                    Stage5TestSupport.PROJECT_ROOT);
+                    projectRoot);
         }
 
         int exitCode() {

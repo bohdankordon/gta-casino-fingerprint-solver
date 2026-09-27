@@ -44,7 +44,9 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * recognized, not what to do about it.
  *
  * <p>Exit codes: 0 when the requested run completed (an UNCERTAIN frame is a completed run), 2 for
- * command-line errors, 3 when the monitor setup, the reference library or the capture failed.
+ * command-line errors, 3 when the gameplay layout or reference data, the monitor setup or the
+ * capture failed. Setup data is read before anything is captured, and a missing, malformed or
+ * undecodable file becomes one diagnostic instead of an uncaught exception.
  */
 public final class LiveRecognitionMain {
     private static final int EXIT_OK = 0;
@@ -95,7 +97,7 @@ public final class LiveRecognitionMain {
         GameplayLayout layout;
         try {
             layout = GameplayLayout.representative(projectRoot.resolve(GameplayFixture.LAYOUT_REL));
-        } catch (IOException e) {
+        } catch (IOException | IllegalArgumentException e) {
             err.println("SETUP_ERROR: could not read the gameplay layout: " + e.getMessage());
             return EXIT_FAILURE;
         }
@@ -122,16 +124,24 @@ public final class LiveRecognitionMain {
         out.println("monitor : " + monitor.describe());
         RecognitionConsensusTracker consensus =
                 new RecognitionConsensusTracker(options.stableFrames());
-        try (ReferenceFingerprintLibrary library = ReferenceFingerprintLibrary.load(projectRoot)) {
+        ReferenceFingerprintLibrary library;
+        try {
+            library = ReferenceFingerprintLibrary.load(projectRoot);
+        } catch (IOException | IllegalArgumentException | IllegalStateException e) {
+            // Reference data is setup input: a missing manifest, a malformed manifest or an
+            // undecodable Stage 1 asset is an installation problem with one clear diagnostic, not
+            // an uncaught stack trace. The boundary stays on the loading phase; anything raised
+            // later by the pipeline or the recognition runtime still propagates untouched.
+            err.println("SETUP_ERROR: could not load the reference library: " + e.getMessage());
+            return EXIT_FAILURE;
+        }
+        try (library) {
             FrameRecognitionPipeline pipeline = new FrameRecognitionPipeline(layout, library);
             LiveRecognitionRuntime runtime = new LiveRecognitionRuntime(
                     captures.create(monitor, required), pipeline, consensus);
             return options.mode() == LiveRecognitionOptions.Mode.ONCE
                     ? runOnce(runtime, options, out, err)
                     : runWatch(runtime, options, out);
-        } catch (IOException e) {
-            err.println("SETUP_ERROR: could not load the reference library: " + e.getMessage());
-            return EXIT_FAILURE;
         } catch (CaptureException e) {
             err.println("CAPTURE_ERROR: " + e.getMessage());
             return EXIT_FAILURE;
