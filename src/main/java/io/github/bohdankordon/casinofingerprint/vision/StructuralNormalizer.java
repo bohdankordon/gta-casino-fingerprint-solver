@@ -17,10 +17,12 @@ import org.bytedeco.opencv.opencv_core.Size;
  * <p>Pipeline per input:
  *
  * <ol>
- *   <li>derive achromatic intensity as the per-pixel {@code min} across color channels
- *       (single-channel input is used as-is). Fingerprint ridges are achromatic
- *       gray/white in every source, so this preserves ridge geometry while attenuating
- *       saturated colored UI pixels, which always have one weak channel;</li>
+ *   <li>derive achromatic intensity as the per-pixel {@code min(B, G, R)}
+ *       (single-channel input is used as-is; the BGRA alpha channel is not a color
+ *       channel and is ignored; any other channel count is rejected). Fingerprint
+ *       ridges are achromatic gray/white in every source, so this preserves ridge
+ *       geometry while attenuating saturated colored UI pixels, which always have
+ *       one weak channel;</li>
  *   <li>optional mild {@code medianBlur(3)} to suppress single-pixel video-compression
  *       speckle and soften the faint dotted grid without blurring ridge edges;</li>
  *   <li>per-image 1st/99th percentile stretch to {@code [0, 255]} so dim unselected
@@ -105,16 +107,21 @@ public final class StructuralNormalizer {
     }
 
     /**
-     * Achromatic intensity: per-pixel minimum across color channels. Single-channel
-     * input is cloned unchanged.
+     * Achromatic intensity: per-pixel {@code min(B, G, R)}. Single-channel input is
+     * cloned unchanged; BGRA alpha is ignored; any other channel count is rejected.
      */
     static Mat achromatic(Mat input) {
-        if (input.channels() == 1) {
+        int channels = input.channels();
+        if (channels == 1) {
             return input.clone();
         }
+        if (channels != 3 && channels != 4) {
+            throw new IllegalArgumentException("Expected 1, 3 or 4 channels, got " + channels);
+        }
+        // min(B, G, R); the BGRA alpha channel is not a color channel and is ignored.
         try (Mat intensity = new Mat(); Mat channel = new Mat()) {
             opencv_core.extractChannel(input, intensity, 0);
-            for (int i = 1; i < input.channels(); i++) {
+            for (int i = 1; i < 3; i++) {
                 opencv_core.extractChannel(input, channel, i);
                 opencv_core.min(intensity, channel, intensity);
             }

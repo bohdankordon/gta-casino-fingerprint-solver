@@ -1,6 +1,7 @@
 package io.github.bohdankordon.casinofingerprint.vision;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.bohdankordon.casinofingerprint.dataset.ReferenceAssetType;
@@ -19,6 +20,7 @@ import java.util.List;
 import org.bytedeco.javacpp.Loader;
 import org.bytedeco.opencv.global.opencv_core;
 import org.bytedeco.opencv.global.opencv_imgcodecs;
+import org.bytedeco.javacpp.indexer.UByteIndexer;
 import org.bytedeco.opencv.opencv_core.Mat;
 import org.bytedeco.opencv.opencv_core.Scalar;
 import org.junit.jupiter.api.BeforeAll;
@@ -197,6 +199,82 @@ class StructuralNormalizerTest {
                             testCase.name() + " brighter variant drifted: " + brightDiff);
                 }
             }
+        }
+    }
+
+    @Test
+    void bgrAndFullyTransparentBgraNormalizeIdentically() {
+        // The review example: B=90 G=90 R=90 A=0 must keep intensity 90, not collapse to 0.
+        try (Mat singleBgr = new Mat(1, 1, opencv_core.CV_8UC3, new Scalar(90, 90, 90, 0));
+                Mat singleBgra = withAlpha(singleBgr, 0);
+                Mat gray = StructuralNormalizer.achromatic(singleBgra);
+                UByteIndexer intensity = gray.createIndexer()) {
+            assertEquals(1, gray.channels(), "Achromatic output channels");
+            assertEquals(90, intensity.get(0, 0), "Transparent pixel keeps B/G/R intensity");
+        }
+        try (Mat bgr = syntheticPatternBgr(48, 64);
+                Mat bgraTransparent = withAlpha(bgr, 0);
+                Mat base = NORMALIZER.normalizeFragment(bgr);
+                Mat transparent = NORMALIZER.normalizeFragment(bgraTransparent)) {
+            assertEquals(0, countDifferentPixels(base, transparent),
+                    "Alpha 0 must not affect normalized output");
+            assertTrue(opencv_core.countNonZero(base) > 0, "Content must survive (not collapse to black)");
+        }
+    }
+
+    @Test
+    void alphaVariationDoesNotAffectNormalizedOutput() {
+        try (Mat bgr = syntheticPatternBgr(48, 64);
+                Mat opaque = withAlpha(bgr, 255);
+                Mat half = withAlpha(bgr, 128);
+                Mat clear = withAlpha(bgr, 0);
+                Mat normalOpaque = NORMALIZER.normalizeFragment(opaque);
+                Mat normalHalf = NORMALIZER.normalizeFragment(half);
+                Mat normalClear = NORMALIZER.normalizeFragment(clear)) {
+            assertEquals(0, countDifferentPixels(normalOpaque, normalHalf), "Alpha 255 vs 128");
+            assertEquals(0, countDifferentPixels(normalOpaque, normalClear), "Alpha 255 vs 0");
+        }
+    }
+
+    @Test
+    void unsupportedChannelCountsAreRejected() {
+        try (Mat twoChannel = new Mat(16, 16, opencv_core.CV_8UC2, new Scalar(60, 60, 60, 0))) {
+            IllegalArgumentException failure = assertThrows(IllegalArgumentException.class,
+                    () -> NORMALIZER.normalizeFragment(twoChannel),
+                    "Two-channel input must be rejected");
+            assertTrue(failure.getMessage().contains("1, 3 or 4"),
+                    "Rejection must name supported counts, got: " + failure.getMessage());
+        }
+    }
+
+    // Deterministic multi-channel pattern with varying B/G/R per pixel.
+    private static Mat syntheticPatternBgr(int rows, int cols) {
+        Mat mat = new Mat(rows, cols, opencv_core.CV_8UC3);
+        try (UByteIndexer indexer = mat.createIndexer()) {
+            for (long y = 0; y < rows; y++) {
+                for (long x = 0; x < cols; x++) {
+                    indexer.put(y, x, 0, (int) ((x * 3 + y * 5) % 200) + 20);
+                    indexer.put(y, x, 1, (int) ((x * 7 + y * 2) % 200) + 20);
+                    indexer.put(y, x, 2, (int) ((x + y * 11) % 200) + 20);
+                }
+            }
+            return mat;
+        }
+    }
+
+    // Same B/G/R content with a constant alpha channel.
+    private static Mat withAlpha(Mat bgr, int alpha) {
+        Mat bgra = new Mat(bgr.rows(), bgr.cols(), opencv_core.CV_8UC4);
+        try (UByteIndexer src = bgr.createIndexer(); UByteIndexer dst = bgra.createIndexer()) {
+            for (long y = 0; y < bgr.rows(); y++) {
+                for (long x = 0; x < bgr.cols(); x++) {
+                    dst.put(y, x, 0, src.get(y, x, 0));
+                    dst.put(y, x, 1, src.get(y, x, 1));
+                    dst.put(y, x, 2, src.get(y, x, 2));
+                    dst.put(y, x, 3, alpha);
+                }
+            }
+            return bgra;
         }
     }
 
