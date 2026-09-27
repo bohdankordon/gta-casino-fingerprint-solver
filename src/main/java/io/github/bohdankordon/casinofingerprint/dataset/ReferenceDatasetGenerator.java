@@ -21,6 +21,9 @@ public final class ReferenceDatasetGenerator {
     static final int EXPECTED_HEIGHT = 1900;
     static final String SOURCE_REL = "dataset/source/casino-fingerprints-reference.png";
     static final String MANIFEST_REL = "dataset/layout/reference-layout.csv";
+    /** SHA-256 of the immutable source collage bytes, also recorded in {@code dataset/README.md}. */
+    static final String EXPECTED_SOURCE_SHA256 =
+            "C8B67FD58ADA4D2420D4689CD47F5FCA2BB767A17B7B641F1770E59860BD5908";
 
     private ReferenceDatasetGenerator() {
     }
@@ -69,7 +72,15 @@ public final class ReferenceDatasetGenerator {
         if (crop.x() + crop.width() > source.cols() || crop.y() + crop.height() > source.rows()) {
             throw new IllegalArgumentException("Crop outside source image: " + crop);
         }
-        Path output = projectRoot.resolve(crop.outputPath().replace('/', java.io.File.separatorChar));
+        Path projectRootNormalized = projectRoot.toAbsolutePath().normalize();
+        Path referenceRoot = projectRootNormalized.resolve("dataset").resolve("reference");
+        Path output = projectRootNormalized
+                .resolve(crop.outputPath().replace('/', java.io.File.separatorChar))
+                .normalize();
+        if (!output.startsWith(referenceRoot)) {
+            throw new IllegalArgumentException(
+                    "Refusing to write outside dataset/reference/: " + crop.outputPath());
+        }
         try {
             Files.createDirectories(output.getParent());
         } catch (IOException e) {

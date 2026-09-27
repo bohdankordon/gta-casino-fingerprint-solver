@@ -9,15 +9,18 @@ import java.util.ArrayList;
 import java.util.EnumMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.TreeSet;
-import java.util.Objects;
 
 /** Reads and validates the human-readable crop manifest (CSV). */
 public final class ReferenceLayout {
     static final int SOURCE_WIDTH = 1500;
     static final int SOURCE_HEIGHT = 1900;
+    /** Repo-relative root every canonical asset must live under (forward slashes). */
+    static final String REFERENCE_ROOT = "dataset/reference/";
 
     private ReferenceLayout() {
     }
@@ -98,6 +101,19 @@ public final class ReferenceLayout {
         }
     }
 
+    /**
+     * Returns the single canonical output path implied by a record, e.g.
+     * {@code dataset/reference/fp_1/target.png} or
+     * {@code dataset/reference/fp_2/fragments/fragment_3.png}.
+     */
+    static String canonicalOutputPath(ReferenceCrop crop) {
+        String fingerprintDir = crop.fingerprintId().name().toLowerCase(Locale.ROOT);
+        if (crop.assetType() == ReferenceAssetType.TARGET) {
+            return REFERENCE_ROOT + fingerprintDir + "/target.png";
+        }
+        return REFERENCE_ROOT + fingerprintDir + "/fragments/fragment_" + crop.fragmentId() + ".png";
+    }
+
     /** Validates counts, ids, rectangles and output paths. */
     public static void validate(List<ReferenceCrop> crops, int sourceWidth, int sourceHeight) {
         Objects.requireNonNull(crops, "crops");
@@ -141,6 +157,15 @@ public final class ReferenceLayout {
         }
         Set<String> paths = new HashSet<>();
         for (ReferenceCrop crop : crops) {
+            String expectedPath = canonicalOutputPath(crop);
+            if (!crop.outputPath().equals(expectedPath)) {
+                throw new IllegalArgumentException("output_path must be the canonical asset location "
+                        + expectedPath + " but was " + crop.outputPath());
+            }
+            Path normalized = Path.of(crop.outputPath()).normalize();
+            if (normalized.isAbsolute() || !normalized.startsWith(Path.of("dataset", "reference"))) {
+                throw new IllegalArgumentException("output_path escapes dataset/reference/: " + crop.outputPath());
+            }
             if (!paths.add(crop.outputPath())) {
                 throw new IllegalArgumentException("Duplicate output_path: " + crop.outputPath());
             }
@@ -149,5 +174,4 @@ public final class ReferenceLayout {
             }
         }
     }
-
 }

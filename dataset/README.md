@@ -15,6 +15,8 @@ gameplay screenshots and implements no matching.
 - The file was moved from the temporary `stage1-source.png` without any byte changes
   and must remain byte-for-byte unchanged. Do not preprocess, resize, or re-encode it.
 - SHA-256 at import time: `C8B67FD58ADA4D2420D4689CD47F5FCA2BB767A17B7B641F1770E59860BD5908`
+- CI verifies that hash over the raw source file bytes, so an accidental re-encoding
+  or replacement is caught even when decoded dimensions still look valid.
 
 ## Layout mapping
 
@@ -59,6 +61,11 @@ positions in one observed puzzle.
 - `asset_type` is `target` or `fragment`; `fragment_id` is empty for targets and
   `1..4` for fragments.
 - `output_path` is repo-relative with forward slashes.
+- Every `output_path` must equal the canonical location implied by its record
+  (`dataset/reference/fp_1/target.png`, or
+  `dataset/reference/fp_2/fragments/fragment_3.png` and equivalents); normalized
+  resolved paths cannot escape `dataset/reference/`, and the generator additionally
+  refuses to write outside that tree.
 - Coordinates are source-image pixels:
   - origin = top-left of the source image
   - `x` increases right, `y` increases downward
