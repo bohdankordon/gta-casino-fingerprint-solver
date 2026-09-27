@@ -11,9 +11,10 @@ those measurements into a conservative recognition decision.
       -> strong / unambiguous  -> RecognitionResult.RECOGNIZED
       -> weak / ambiguous      -> RecognitionResult.UNCERTAIN
 
-Scope: the engine starts from an already extracted and normalized puzzle. There is no
-live screen capture, no automatic screen detection, no keyboard navigation and no input
-automation. Stage 5 has not started.
+Scope: the engine starts from an already extracted and normalized puzzle. Stage 5 adds live
+screen capture, frame-size validation and a recognition-only runtime around this engine
+(see docs/live-recognition-runtime.md); the recognition engine itself is unchanged, there is
+still no automatic screen detection and there is no keyboard or mouse automation.
 
 ## The assignment problem
 
@@ -188,9 +189,11 @@ never reads fixture annotations; only tests and diagnostics compare against them
 
 Stage 4 consumes TargetMatchResult plus the 8x4 matrix and produces the
 constrained assignment, ambiguity evidence, and the conservative
-recognized/uncertain decision. Still NOT implemented: live screen capture, automatic
-screen detection, keyboard navigation, Enter/Tab automation, and any round state
-machine. The early Stage 0 scaffolding (FingerprintRecognizer, ImageNormalizer,
+recognized/uncertain decision. Live screen capture, frame-size validation and the
+recognition-only runtime around it are Stage 5 (docs/live-recognition-runtime.md).
+Still NOT implemented: automatic screen detection, keyboard navigation, Enter/Tab
+automation, and any round state machine. The early Stage 0 scaffolding
+(FingerprintRecognizer, ImageNormalizer,
 FingerprintSolver) models a simpler single-Mat pipeline and is not the active
 runtime; the active Stage 4 entry point is recognition.PuzzleRecognitionEngine,
 which starts from an already normalized puzzle.
