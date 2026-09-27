@@ -34,10 +34,15 @@ One capture performs these steps:
 4. convert only the variant whose pixel size is EXACTLY the required physical resolution.
 
 The converted frame is CV_8UC3 BGR, produced by capture.BufferedImageMatConverter: the image is
-brought to TYPE_3BYTE_BGR (whose byte order already is B, G, R) through the AWT raster pipeline,
-its backing byte array is wrapped in a temporary Mat header and cloned, so no Java per-pixel
-getRGB loop runs over a full 2560x1440 screenshot. The returned Mat owns a private copy of the
-pixels and never references the BufferedImage.
+brought to a plain TYPE_3BYTE_BGR layout (whose byte order already is B, G, R) through the AWT
+raster pipeline, its backing byte array is wrapped in a temporary Mat header and cloned, so no Java
+per-pixel getRGB loop runs over a full 2560x1440 screenshot. The returned Mat owns a private copy
+of the pixels and never references the BufferedImage. A conversion holds two short-lived
+resources - a native byte pointer holding a copy of the image bytes and a Mat header that borrows
+it - and both are closed in a fixed order before the conversion returns, the header before the
+pointer. Roughly 11 MB of temporary native storage per 2560x1440 frame is therefore released
+deterministically instead of waiting for garbage collection, which matters in a watch loop where
+that happens every captured frame.
 
 When the platform cannot provide HiDPI variants (createMultiResolutionScreenCapture throws
 UnsupportedOperationException), the backend falls back to a plain single-image capture. That
@@ -292,6 +297,9 @@ exercised only by the manual probe.
   normalized intermediates; borrows the reference library.
 - ReferenceFingerprintLibrary: loaded once per runtime session, closed once on shutdown.
 - AWT: no BufferedImage of a captured frame is retained after a capture call.
+- BufferedImageMatConverter: the temporary native pixel buffer and the borrowing Mat header of a
+  conversion are closed before the call returns; no conversion object needs garbage collection to
+  release them.
 
 ## Limitations
 
