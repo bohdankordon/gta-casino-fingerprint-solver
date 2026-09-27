@@ -239,7 +239,8 @@ public final class RecognitionEvaluation {
         text.append("  user-captured fixtures before input automation.\n");
         text.append("- Fixture annotations are evaluation-only ground truth; production recognition\n");
         text.append("  never reads them.\n");
-        text.append("- No live capture, no screen detection, no keyboard automation: Stage 5 work.\n");
+        text.append("- Stage 5 (docs/live-recognition-runtime.md) adds live capture and a\n");
+        text.append("  recognition-only runtime around this engine; no input automation exists.\n");
         return text.toString();
     }
 
