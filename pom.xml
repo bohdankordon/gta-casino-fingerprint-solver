@@ -11,6 +11,7 @@
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <maven.compiler.release>21</maven.compiler.release>
+        <exec.mainClass>io.github.bohdankordon.casinofingerprint.app.FingerprintApplication</exec.mainClass>
     </properties>
 
     <dependencies>
@@ -49,7 +50,7 @@
                 <artifactId>exec-maven-plugin</artifactId>
                 <version>3.6.4</version>
                 <configuration>
-                    <mainClass>io.github.bohdankordon.casinofingerprint.app.FingerprintApplication</mainClass>
+                    <mainClass>${exec.mainClass}</mainClass>
                 </configuration>
             </plugin>
         </plugins>
