@@ -79,6 +79,19 @@ above intensity 100): the CLONE TARGET header stays above, the ACCESS ATTEMPTS p
   brightness changes within a round. Stage 2 contains NO input automation, NO live
   capture and NO minigame detection.
 
+## Ground-truth annotation (Stage 3)
+
+- Annotation: `fixtures/gameplay/annotations/representative-2560x1440.csv`
+- The annotation records which reference fingerprint this fixture shows (`FP_1`) and which
+  candidate index is the correct match for each reference fragment
+  (`FRAGMENT_1 -> C6`, `FRAGMENT_2 -> C0`, `FRAGMENT_3 -> C3`, `FRAGMENT_4 -> C7`).
+- It is human verified from **fingerprint ridge geometry**, independently of UI brightness and
+  selection state: candidates 0, 3 and 7 are selected/bright and candidate 6 is correct but
+  still dim. See `fixtures/gameplay/annotations/README.md` for provenance and format.
+- It covers this fixture only and is evaluation/test material: Stage 3 tests and the Stage 3
+  diagnostics tool compare matcher output against it, while production matching code never
+  reads annotation files.
+
 ## Normalization
 
 StructuralNormalizer applies one deterministic pipeline to Stage 1 reference
@@ -130,3 +143,12 @@ The previews write `target/stage2-gameplay-roi-overlay.png`,
 Open all three and confirm the target ROI holds the full print, candidate ROIs exclude
 borders/markers/neighbors in row-major order, dim candidates stay visible and bright
 candidates keep the same structure after normalization.
+
+Stage 3 structural matching diagnostics for this fixture (score CSVs, text report, heatmap
+and match preview under `target/`; Stage 3 scores and ranks only, it selects nothing):
+
+  .\mvnw.cmd -B -ntp compile exec:java "-Dexec.mainClass=io.github.bohdankordon.casinofingerprint.matching.evaluation.MatchingEvaluation"
+
+Confirm that the target ranking puts `FP_1` first, that each annotated fragment/candidate
+pair wins its own row and column ranking, and that distractor candidates stay well below the
+correct ones. Algorithm details and measured numbers are in `docs/structural-matching.md`.

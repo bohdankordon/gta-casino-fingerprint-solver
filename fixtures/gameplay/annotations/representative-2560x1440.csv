@@ -1,0 +1,6 @@
+record_type,fingerprint_id,fragment_id,candidate_index
+target,FP_1,,
+fragment,FP_1,1,6
+fragment,FP_1,2,0
+fragment,FP_1,3,3
+fragment,FP_1,4,7
