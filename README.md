@@ -4,7 +4,7 @@ An early, recognition-only computer-vision prototype for the GTA Online Diamond 
 
 ## Status and scope
 
-Stage 0 provides the Java project, native OpenCV verification, and domain and processing contracts. It does **not** recognize screenshots yet. Automated game input is **not** part of this stage.
+Stage 0 provides the Java project, native OpenCV verification, and domain and processing contracts. Stage 1 adds the canonical reference dataset (4 targets, 16 fragments, reproducible crops with manifest, generator and preview) and is pending human visual verification. The project does **not** recognize screenshots yet. Automated game input is **not** part of this stage.
 
 ## Stack
 
@@ -21,6 +21,7 @@ Stage 0 provides the Java project, native OpenCV verification, and domain and pr
 - `solver`: `FingerprintSolver` passes a frame through normalization and recognition. Candidate assignment is future work.
 - `debug`: OpenCV native health check.
 - `app`: command-line entry point for the health check only.
+- `dataset`: Stage 1 canonical reference crops, manifest, generator and preview tooling (no matching yet).
 
 OpenCV `Mat` results from capture and normalization are owned by their callers and must be closed. `FingerprintSolver` closes the normalized image; the input frame remains the caller's responsibility.
 
