@@ -45,6 +45,13 @@ public final class ReferenceFingerprintLibrary implements AutoCloseable {
     /**
      * Loads and normalizes every Stage 1 reference asset below {@code projectRoot}.
      *
+     * <p>Ownership invariant: every normalized Mat created here is either transferred into the
+     * returned library or closed exactly once before the failure propagates. Profiles normalized
+     * for the fingerprint currently being read stay in a local pending list until they are
+     * transferred, and that list is closed by the local handler, so a failure part way through a
+     * fingerprint cannot strand profiles that were already normalized. Maps only ever hold Mats
+     * that have left the pending list, so no Mat is closed twice.
+     *
      * @param projectRoot repository root holding the Stage 1 manifest and canonical assets
      * @return an open library that must be closed by the caller
      */
@@ -56,34 +63,53 @@ public final class ReferenceFingerprintLibrary implements AutoCloseable {
         EnumMap<FingerprintId, List<Mat>> fragments = new EnumMap<>(FingerprintId.class);
         try {
             for (FingerprintId id : FingerprintId.values()) {
-                ReferenceCrop target = crops.stream()
-                        .filter(c -> c.fingerprintId() == id && c.assetType() == ReferenceAssetType.TARGET)
-                        .findFirst()
-                        .orElseThrow(() -> new IllegalStateException("Manifest has no target for " + id));
-                try (Mat raw = read(projectRoot, target)) {
-                    targets.put(id, normalizer.normalizeTarget(raw));
-                }
-                List<Mat> fragmentProfiles = new ArrayList<>(4);
-                for (int fragmentId = 1; fragmentId <= 4; fragmentId++) {
-                    int wanted = fragmentId;
-                    ReferenceCrop fragment = crops.stream()
-                            .filter(c -> c.fingerprintId() == id
-                                    && c.assetType() == ReferenceAssetType.FRAGMENT
-                                    && c.fragmentId() == wanted)
-                            .findFirst()
-                            .orElseThrow(() -> new IllegalStateException(
-                                    "Manifest has no fragment " + wanted + " for " + id));
-                    try (Mat raw = read(projectRoot, fragment)) {
-                        fragmentProfiles.add(normalizer.normalizeFragment(raw));
+                List<Mat> pending = new ArrayList<>(5);
+                try {
+                    try (Mat raw = read(projectRoot, targetCrop(crops, id))) {
+                        pending.add(normalizer.normalizeTarget(raw));
                     }
+                    for (int fragmentId = 1; fragmentId <= 4; fragmentId++) {
+                        try (Mat raw = read(projectRoot, fragmentCrop(crops, id, fragmentId))) {
+                            pending.add(normalizer.normalizeFragment(raw));
+                        }
+                    }
+                    // Transfer ownership one Mat at a time: a profile leaves the pending list only
+                    // after the map insert that makes the library responsible for it succeeded.
+                    Mat targetProfile = pending.get(0);
+                    targets.put(id, targetProfile);
+                    pending.remove(0);
+                    List<Mat> fragmentProfiles = List.copyOf(pending);
+                    fragments.put(id, fragmentProfiles);
+                    pending.clear();
+                } catch (Throwable t) {
+                    for (Mat profile : pending) {
+                        profile.close();
+                    }
+                    throw t;
                 }
-                fragments.put(id, fragmentProfiles);
             }
-        } catch (RuntimeException e) {
+        } catch (Throwable t) {
             closeAll(targets, fragments);
-            throw e;
+            throw t;
         }
         return new ReferenceFingerprintLibrary(targets, fragments);
+    }
+
+    private static ReferenceCrop targetCrop(List<ReferenceCrop> crops, FingerprintId id) {
+        return crops.stream()
+                .filter(c -> c.fingerprintId() == id && c.assetType() == ReferenceAssetType.TARGET)
+                .findFirst()
+                .orElseThrow(() -> new IllegalStateException("Manifest has no target for " + id));
+    }
+
+    private static ReferenceCrop fragmentCrop(List<ReferenceCrop> crops, FingerprintId id, int fragmentId) {
+        return crops.stream()
+                .filter(c -> c.fingerprintId() == id
+                        && c.assetType() == ReferenceAssetType.FRAGMENT
+                        && c.fragmentId() == fragmentId)
+                .findFirst()
+                .orElseThrow(() -> new IllegalStateException(
+                        "Manifest has no fragment " + fragmentId + " for " + id));
     }
 
     /** Borrowed 256x384 normalized target profile for {@code id}; do not close or modify. */

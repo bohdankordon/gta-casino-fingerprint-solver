@@ -23,9 +23,10 @@ public final class TargetMatcher {
     /**
      * x/y search radius in pixels on the 256x384 target profile.
      *
-     * <p>Measured on the representative fixture, target separation stays stable across 4..16 px of
-     * tolerance while the correct target keeps a wide margin, so 8 px (about 3% of profile width,
-     * matching the fragment-profile tolerance) was chosen as one shared, generic value.
+     * <p>Measured on the representative fixture at 6 px, 8 px and 10 px of tolerance: the correct
+     * target stays ranked first with essentially unchanged separation in all three cases. The 8 px
+     * value is also the same ~3% of profile width used by the fragment profile, so one shared,
+     * generic value covers both profiles.
      */
     public static final int TRANSLATION_RADIUS = 8;
 
