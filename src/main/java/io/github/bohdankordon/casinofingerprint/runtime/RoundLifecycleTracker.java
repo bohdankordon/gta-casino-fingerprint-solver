@@ -174,8 +174,11 @@ public final class RoundLifecycleTracker {
      *
      * <p>This is lifecycle acknowledgement only — not gameplay input, not gameplay success.
      * It transitions {@code ROUND_READY} to {@code ROUND_CONSUMED} and records exactly the
-     * ready identity, which stays remembered until a different stable identity is observed
-     * or the tracker is reset.
+     * ready identity as the most recently consumed one. That consumed identity stays
+     * remembered while the same identity continues, while observations are non-stable,
+     * while a different identity becomes and remains pending, and while the tracker is
+     * desynchronized; it is replaced only by a later successful consumption and cleared
+     * only by {@code reset()}.
      *
      * @return exactly the canonical ready identity
      * @throws IllegalStateException when the state is not {@code ROUND_READY} (waiting,

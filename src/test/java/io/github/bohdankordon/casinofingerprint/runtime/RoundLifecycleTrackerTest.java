@@ -332,6 +332,16 @@ class RoundLifecycleTrackerTest {
         assertEquals(identity(FingerprintId.FP_3, B_SET),
                 onset.stable().orElseThrow(), "Current stable");
         assertTrue(onset.describe().contains("ROUND_READY"), "Description");
+        // The previously consumed identity stays remembered while the next round remains
+        // pending and through desynchronization; only a later consume or reset changes it.
+        RoundLifecycleStatus clash =
+                tracker.accept(stable(FingerprintId.FP_1, List.of(0, 4, 6, 7)));
+
+        assertEquals(RoundLifecycleState.DESYNCHRONIZED, clash.state(), "Desync");
+        assertEquals(identity(FingerprintId.FP_4, A_SET),
+                clash.consumed().orElseThrow(), "Consumed survives desynchronization");
+        assertEquals(identity(FingerprintId.FP_4, A_SET),
+                tracker.consumedIdentity().orElseThrow(), "Tracker still remembers");
     }
 
     @Test
@@ -367,4 +377,3 @@ class RoundLifecycleTrackerTest {
         return LiveRecognitionStatus.uncertain(Stage5TestSupport.syntheticUncertain());
     }
 }
-

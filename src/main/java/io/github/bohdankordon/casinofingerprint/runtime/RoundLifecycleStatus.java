@@ -17,7 +17,11 @@ import java.util.Optional;
  *        {@code ROUND_READY}, and (as a stale, non-actionable diagnostic) in
  *        {@code DESYNCHRONIZED}
  * @param consumedIdentity last acknowledged round identity; present only after a consumption
- *        until a different identity becomes ready or the tracker is reset
+ *        identity ("last acknowledged round"); present only after a consumption. It stays
+ *        remembered while the same identity continues, while observations are non-stable,
+ *        while a different identity becomes and remains {@code ROUND_READY}, and while the
+ *        tracker is {@code DESYNCHRONIZED}. It is replaced only by a later successful
+ *        {@code consumeReadyRound()} and cleared only by {@code reset()}
  * @param stableIdentity identity of the most recently accepted consensus observation, when
  *        that observation is still {@code STABLE_RECOGNIZED}; {@code null} otherwise
  * @param newRoundReady true when this accepted observation produced a {@code NEW_ROUND_READY}
