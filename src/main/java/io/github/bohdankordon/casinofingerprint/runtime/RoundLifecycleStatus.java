@@ -16,8 +16,8 @@ import java.util.Optional;
  * @param readyIdentity round waiting for downstream acknowledgement; present only in
  *        {@code ROUND_READY}, and (as a stale, non-actionable diagnostic) in
  *        {@code DESYNCHRONIZED}
- * @param consumedIdentity last acknowledged round identity; present only after a consumption
- *        identity ("last acknowledged round"); present only after a consumption. It stays
+ * @param consumedIdentity the most recently successfully consumed/acknowledged round
+ *        identity; present only after at least one successful consumption. It stays
  *        remembered while the same identity continues, while observations are non-stable,
  *        while a different identity becomes and remains {@code ROUND_READY}, and while the
  *        tracker is {@code DESYNCHRONIZED}. It is replaced only by a later successful
