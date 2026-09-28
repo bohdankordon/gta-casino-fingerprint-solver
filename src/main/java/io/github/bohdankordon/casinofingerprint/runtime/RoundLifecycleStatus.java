@@ -32,6 +32,9 @@ import java.util.Optional;
  * @param desynchronizedNow true when this accepted observation caused the transition into
  *        {@code DESYNCHRONIZED}; later observations while already desynchronized report
  *        {@code false} because the transition happened only once
+ * @param transitionWitnessUsed true only on the accept call where an otherwise-suppressed
+ *        repeated consumed identity becomes {@code ROUND_READY} because an independent
+ *        structural content transition was confirmed; never true otherwise
  */
 public record RoundLifecycleStatus(
         RoundLifecycleState state,
@@ -40,7 +43,8 @@ public record RoundLifecycleStatus(
         RecognitionIdentity stableIdentity,
         boolean newRoundReady,
         boolean consumedIdentityRepeated,
-        boolean desynchronizedNow) {
+        boolean desynchronizedNow,
+        boolean transitionWitnessUsed) {
 
     public RoundLifecycleStatus {
         Objects.requireNonNull(state, "state");
@@ -59,6 +63,14 @@ public record RoundLifecycleStatus(
         if (state == RoundLifecycleState.WAITING_FOR_STABLE && consumedIdentity != null) {
             throw new IllegalArgumentException(
                     "WAITING_FOR_STABLE must not expose a consumed identity");
+        }
+        if (transitionWitnessUsed && !newRoundReady) {
+            throw new IllegalArgumentException(
+                    "transitionWitnessUsed requires a NEW_ROUND_READY event");
+        }
+        if (transitionWitnessUsed && state != RoundLifecycleState.ROUND_READY) {
+            throw new IllegalArgumentException(
+                    "transitionWitnessUsed requires the ROUND_READY state");
         }
         int events = 0;
         if (newRoundReady) {
@@ -115,6 +127,9 @@ public record RoundLifecycleStatus(
         }
         if (desynchronizedNow) {
             text.append(" DESYNCHRONIZED_NOW");
+        }
+        if (transitionWitnessUsed) {
+            text.append(" WITNESS_PERMITTED");
         }
         return text.toString();
     }
