@@ -6,6 +6,8 @@ An early, recognition-only computer-vision prototype for the GTA Online Diamond 
 
 Stage 0 provides the Java project, native OpenCV verification, and domain and processing contracts. Stage 1 adds the canonical reference dataset (4 targets, 16 fragments, reproducible crops with manifest, generator and preview). Stage 2 adds representative 2560x1440 gameplay ROI extraction (one target plus eight row-major candidates) and deterministic structural normalization shared by reference and gameplay crops. Stage 3 adds structural matching: the gameplay target is scored against all four reference targets, and all eight candidates are scored against the four reference fragments of the ranked target, producing a complete 8x4 similarity matrix. Stage 4 adds constrained recognition: the matrix is solved as an exact 4-of-8 one-to-one assignment with ambiguity measurements, and a conservative provisional policy turns the evidence into a `RecognitionResult` (recognized vs uncertain). Stage 5 adds the live recognition-only runtime: an AWT/Robot desktop capture backend that selects the exact physical display resolution, monitor discovery and explicit selection, a full-frame recognition pipeline and a three-frame decision consensus behind a command-line runtime with `--list-monitors`, `--once` and `--watch`. Stage 5 reads the screen and prints recognition results only: there is still no keyboard or mouse automation, no automatic solving, no round state machine, no game-process interaction, and only the bundled 2560x1440 fixture layout is supported. Stage 6A/6B adds a real-gameplay recording benchmark: human-verified round annotations for two private local recordings, a frozen-pipeline baseline over every frame of the annotated rounds, a strict negative-gameplay false-positive measurement, a consensus replay and an evaluation-only 1920x1080 geometry hypothesis. Stage 6A/6B changed no matcher, no normalization, no policy threshold and no production runtime support; the recordings themselves are private, local and not committed, and Stage 6C/6D (any tuning at all) has not started. Stage 6C.1A characterizes the round and hack transitions of those recordings at full source frame rate and simulates candidate lifecycle guards offline, so the temporal carryover problem is measured before any state machine is written. Stage 6C.1A implements NO round lifecycle state machine, no round consumption API, no input automation and no sleep, and it changes no production behaviour either. Stage 6C.1B adds the production round lifecycle tracker documented in [docs/round-lifecycle-tracker.md](docs/round-lifecycle-tracker.md): stable-episode onsets after recognition consensus become ROUND_READY rounds, downstream code explicitly consumes them, the consumed identity stays suppressed fail-closed, a different stable identity becomes the next round, and an unconsumed pending round followed by a different answer desynchronizes instead of being replaced. The full-rate replay over both recordings yields exactly 8 ready and 8 consumed rounds in annotated order with zero duplicates, zero unexplained answers and zero desynchronizations; repeated identical consecutive identities stay suppressed without an independent transition witness, and there is still no input automation, no solving action and no production 1080p support.
 
+Stage 6C.1C characterizes the independent visual round-transition witness candidates documented in [docs/transition-witness-analysis.md](docs/transition-witness-analysis.md): five witness families (raw panel difference as a control, target-only structural similarity, per-candidate same-position structural similarity, the full puzzle signature and the matcher evidence signatures) are measured on every decoded frame of both recordings against one deterministic consumed-round content baseline per round, and the four real R1 to R2 transitions, 3800 same-round frames, a 104 rule threshold sweep, a counterfactual same-identity replay and an exact-visual-repeat control show that an identity-independent content witness is measurable without being promoted. Stage 6C.1C adds NO production transition witness, changes nothing in `RoundLifecycleTracker` or `RecognitionConsensusTracker`, weakens nothing in the fail-closed same-identity behaviour, promotes no threshold, sends no input, adds no timer and adds no production 1080p support.
+
 ## Stack
 
 - Java 21
@@ -29,7 +31,8 @@ Stage 0 provides the Java project, native OpenCV verification, and domain and pr
  - `runtime`: Stage 5 live runtime — `FrameRecognitionPipeline` (one full captured frame to a `RecognitionDecision`, reusing one reference library), `RecognitionConsensusTracker` (consecutive-frame decision consensus), `LiveRecognitionRuntime` (capture loop producing a `LiveRecognitionStatus`) and `LiveRecognitionState`; plus the Stage 6C.1B production round lifecycle — `RecognitionIdentity` (fingerprint plus sorted candidates), `RoundLifecycleTracker` (stable-episode onsets into `ROUND_READY`, explicit `consumeReadyRound()` acknowledgement, same-identity suppression, fail-closed `DESYNCHRONIZED`, explicit `reset()` only) with `RoundLifecycleState` and the immutable `RoundLifecycleStatus` snapshot. The lifecycle tracker answers whether a stable recognition is a new round; it sends no input and keeps no clocks or durations.
 - `evaluation.recording`: Stage 6A/6B real-gameplay benchmark tooling - the committed recording source/round/hack annotation catalogs, a sequential OpenCV `VideoCapture` decoder, the evaluation-only uniform layout scaler, the positive/negative frame classifiers, the aggregate summaries, the `RecognitionConsensusTracker` replay, the local contact-sheet writer and the benchmark entry point. Evaluation only: no production package reads the recording annotations and the private recordings never leave `local-data/`.
 - `evaluation.recording.transition`: Stage 6C.1A full-rate transition characterization - the per-frame temporal trace and its run compression, the three transition summaries (hack entry, inter-round, hack exit), the offline reset experiment, the offline G0-G4 guard simulations and the transition report/contact-sheet tooling. Evaluation only, measurement only: no lifecycle state machine, no round consumption API and no production behaviour.
- - `evaluation.recording.transition`: Stage 6C.1A full-rate transition characterization - the per-frame temporal trace and its run compression, the three transition summaries (hack entry, inter-round, hack exit), the offline reset experiment, the offline G0-G4 guard simulations and the transition report/contact-sheet tooling; plus the Stage 6C.1B production lifecycle replay - every full-rate frame through the unmodified production consensus tracker and then the production lifecycle tracker, with a simulated well-behaved consumer that immediately consumes every ready round and sends no input, verified per hack and per full source against the human annotations. Evaluation only, measurement only: no input automation and no production behaviour change.
+- `evaluation.recording.transition`: Stage 6C.1A full-rate transition characterization - the per-frame temporal trace and its run compression, the three transition summaries (hack entry, inter-round, hack exit), the offline reset experiment, the offline G0-G4 guard simulations and the transition report/contact-sheet tooling; plus the Stage 6C.1B production lifecycle replay - every full-rate frame through the unmodified production consensus tracker and then the production lifecycle tracker, with a simulated well-behaved consumer that immediately consumes every ready round and sends no input, verified per hack and per full source against the human annotations. Evaluation only, measurement only: no input automation and no production behaviour change.
+- `evaluation.recording.transition.witness`: Stage 6C.1C independent visual round-transition witness characterization - W0..W4 witness families measured on every full-rate frame against one frozen consumed-round content baseline per round, the same-round / transition / entry / exit populations, the rule and threshold sweep with worst-case separation margins, the counterfactual same-identity replay and the exact-visual-repeat control. Evaluation only, measurement only: no production transition witness, no lifecycle change, no input, no tuning and no production 1080p support.
 
 OpenCV `Mat` results from capture and normalization are owned by their callers and must be closed. `FingerprintSolver` closes the normalized image; the input frame remains the caller's responsibility.
 
@@ -165,6 +168,49 @@ It writes `target/stage6c-transition-frames.csv`, `target/stage6c-transition-run
 `target/stage6c-transition-report.txt` and the dense local contact sheets under
 `target/stage6c-transition-contact-sheets/` (all build output, never committed).
 
+## Round transition witness analysis (Stage 6C.1C)
+
+The independent visual round-transition witness characterization is documented in
+[docs/transition-witness-analysis.md](docs/transition-witness-analysis.md). It answers the question
+Stage 6C.1B left open - can an independent visual/content signal prove that the puzzle content
+changed, even when the answer identity hypothetically stays the same - and it is **witness
+characterization, not production integration**.
+
+Measured on every decoded frame of both recordings (4442 analyzed frames in total, no sampling),
+against one deterministic content baseline per round frozen at exactly the frame Stage 6C.1B
+consumes:
+
+- 3800 same-round frames (selector movement, 0/1/2/3 selected candidates, the fully selected state,
+  the real wrong C5 selection with the ERROR banner and every recognition interruption) were measured
+  against five candidate witness families W0..W4;
+- 52 of 104 candidate rules never fired on any same-round frame *and* detected all four real
+  R1 -> R2 transitions, at the first frame of the new content (offset 0 versus first new recognized);
+- raw panel difference (the W0 control) overlaps the same round and the transition and is rejected;
+  the useful family is structural multi-region change (at least K of the 9 regions changed), which on
+  this dataset separates a 2-of-9 worst same-round case from a 9-of-9 transition;
+- the counterfactual same-identity replay keeps the witness firing while the unmodified production
+  `RoundLifecycleTracker` suppresses the repeated identity, so the witness is independent of
+  `RecognitionIdentity`; an exact visual repetition stays fail-closed and remains unprovable;
+- the dominant same-round deviation is a recurring UI notification banner, not puzzle content; that
+  limitation and the absence of any real same-identity consecutive round pair are documented.
+
+This stage implements no production transition witness, changes nothing in `RoundLifecycleTracker`
+or `RecognitionConsensusTracker`, sends no input, adds no timer and adds no production 1080p support.
+Its decision gate recommends one carefully scoped candidate for a later stage; it promotes no
+threshold to production.
+
+Run it locally (the private recordings must exist first):
+
+```powershell
+.\mvnw.cmd -B -ntp compile exec:java "-Dexec.mainClass=io.github.bohdankordon.casinofingerprint.evaluation.recording.transition.witness.TransitionWitnessAnalysisMain"
+```
+
+It writes `target/stage6c1c-witness-frames.csv`, `target/stage6c1c-witness-transitions.csv`,
+`target/stage6c1c-witness-distributions.csv`, `target/stage6c1c-witness-separation.csv`,
+`target/stage6c1c-witness-rules.csv`, `target/stage6c1c-witness-counterfactual.csv`,
+`target/stage6c1c-witness-same-target.csv`, `target/stage6c1c-witness-report.txt` and the local
+review sheets under `target/stage6c1c-witness-contact-sheets/` (all build output, never committed).
+
 ## Roadmap
 
 1. Stage 0 - foundation
@@ -176,6 +222,7 @@ It writes `target/stage6c-transition-frames.csv`, `target/stage6c-transition-run
 7. Stage 6 - robustness evaluation and tuning
    - Stage 6A/6B - real gameplay recording dataset and frozen baseline benchmark (complete: annotations, private recording ingestion, positive and negative frame benchmarks, consensus replay and an evaluation-only 1080p geometry; no algorithm or policy change)
    - Stage 6C.1A - full-rate round-transition characterization (complete: per-frame temporal trace, transition summaries, reset experiment, offline guard simulation and a design recommendation; no lifecycle state machine yet)
-   - Stage 6C.1B - the RoundLifecycleTracker itself, fail-closed and event based (NOT started)
+   - Stage 6C.1B - the production RoundLifecycleTracker, fail-closed and event based (complete: stable-episode onsets, explicit consumption, same-identity suppression and fail-closed desynchronization; the full-rate replay over both recordings yields 8 ready and 8 consumed rounds with zero duplicate carryover, zero unexplained answers and zero desynchronizations; no input and no timing constant)
+   - Stage 6C.1C - independent visual round-transition witness characterization (complete: W0..W4 witness families measured on 4442 full-rate frames against one frozen consumed-round baseline per round, the same-round / transition / entry / exit populations, a 104 rule threshold sweep with worst-case separation margins, the counterfactual same-identity replay and the exact-visual-repeat control; measurement only - no production witness, no lifecycle change, no input and no tuning)
    - Stage 6C/6D - any tuning based on the measured baseline (NOT started)
 8. Possible later stage - optional input automation
