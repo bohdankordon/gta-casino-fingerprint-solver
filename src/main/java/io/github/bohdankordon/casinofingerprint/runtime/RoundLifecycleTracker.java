@@ -34,10 +34,19 @@ import java.util.Optional;
  * ROUND_READY(P)     --stable onset(Q!=P)--&gt; DESYNCHRONIZED (pending P kept as stale diagnostic)
  * ROUND_READY(P)     --anything else--&gt; ROUND_READY(P)     (consume validity follows the
  *                                                          latest observation, see below)
- * ROUND_CONSUMED(C)  --stable onset(C)--&gt; ROUND_CONSUMED(C) (suppressed, never a new round)
- * ROUND_CONSUMED(C)  --stable onset(Q!=C)--&gt; ROUND_READY(Q)
- * DESYNCHRONIZED     --anything--&gt; DESYNCHRONIZED          (only reset() clears it)
+* ROUND_CONSUMED(C)  --stable onset(C)--&gt; ROUND_CONSUMED(C) (suppressed, never a new round)
+* ROUND_CONSUMED(C)  --stable onset(Q!=C)--&gt; ROUND_READY(Q)
+* DESYNCHRONIZED     --anything--&gt; DESYNCHRONIZED          (only reset() clears it)
+* </pre>
+ *
+ * <p>Witnessed addition (see the evidence overload, normally reached through
+ * {@link RoundLifecycleWitnessCoordinator}):
+ *
+ * <pre>
+ * ROUND_CONSUMED(C)  --STABLE C + confirmed witness--&gt; ROUND_READY(C)
  * </pre>
+ *
+ * with no episode-onset requirement: a continued stable frame suffices.
  *
  * <p>Consumption contract ({@link #consumeReadyRound()}): valid only while the state is
  * {@code ROUND_READY} AND the most recently accepted consensus observation is still
@@ -134,11 +143,17 @@ public final class RoundLifecycleTracker {
      * {@code ROUND_READY} with {@code transitionWitnessUsed} set. Every other combination ignores
      * the witness: non-stable consensus, a waiting/pending/desynchronized tracker, or a different
      * stable identity (which follows the existing identity-change path with no witness needed).
-     * In particular a witnessed same-identity transition needs no new consensus episode onset:
-     * a continued {@code STABLE} frame of the consumed identity plus confirmed evidence is
-     * sufficient.
+    * In particular a witnessed same-identity transition needs no new consensus episode onset:
+    * a continued {@code STABLE} frame of the consumed identity plus confirmed evidence is
+    * sufficient.
+    *
+     * <p>Lower-level runtime primitive: production orchestration should use
+     * {@link RoundLifecycleWitnessCoordinator}, which binds the consensus status and the
+     * witness evidence to the same observed frame. This overload stays public because the
+     * evaluation-only counterfactual harness pairs production evidence with a substituted
+     * identity below the coordinator boundary.
      *
-     * @param consensusStatus output of {@link RecognitionConsensusTracker} for one frame
+    * @param consensusStatus output of {@link RecognitionConsensusTracker} for one frame
      * @param transitionEvidence plain-data structural witness outcome for the same frame; never
      *        {@code null} (use {@link PuzzleContentTransitionEvidence#absent()} for no witness)
      * @return immutable snapshot of the lifecycle after this observation

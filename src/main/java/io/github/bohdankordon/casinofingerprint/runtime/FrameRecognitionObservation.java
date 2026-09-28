@@ -31,12 +31,17 @@ public final class FrameRecognitionObservation implements AutoCloseable {
     private boolean closed;
 
     /**
+     * Package-private: production observations must be created by
+     * {@link FrameRecognitionPipeline#observe(org.bytedeco.opencv.opencv_core.Mat)}, which is
+     * the only path that guarantees the decision and the normalized puzzle come from the
+     * same frame. External callers must not manufacture arbitrary decision/puzzle pairings.
+     *
      * @param decision conservative decision of the observed frame; required
      * @param puzzle owned normalized puzzle of the same frame; ownership is transferred here
      * @param extractionNanos ROI extraction plus structural normalization time
      * @param recognitionNanos target/fragment matching plus policy time
      */
-    public FrameRecognitionObservation(RecognitionDecision decision, NormalizedPuzzleFrame puzzle,
+    FrameRecognitionObservation(RecognitionDecision decision, NormalizedPuzzleFrame puzzle,
             long extractionNanos, long recognitionNanos) {
         this.decision = Objects.requireNonNull(decision, "decision");
         this.puzzle = Objects.requireNonNull(puzzle, "puzzle");

@@ -68,6 +68,16 @@ closes each per-frame observation. The intended call order per frame is observe,
 accept, coordinator accept, and consumption with the SAME observation when it reports a new
 ready round. The old puzzle-based coordinator overloads were removed so no alternate public path
 can bypass the same-frame invariant.
+Accept-time pairing is bound by decision object identity, not just by call order. The consensus
+tracker returns statuses that wrap the exact decision object passed into it, and the coordinator
+requires the status decision to be the SAME object as the observation decision, by reference.
+A status from frame X paired with the observation of frame Y is rejected before any witness
+measurement, any lifecycle mutation, or any consumable-observation change, so lifecycle
+evidence can never mix a decision from one frame with structural content from another. Only the
+pipeline creates production observations (the observation constructor is package-private), so an
+arbitrary decision and puzzle pairing cannot be manufactured outside the runtime package.
+Decision-free conditions such as waiting, capture errors, and unsupported frames use the
+no-observation overload, which in turn rejects decision-bearing statuses for the same reason.
 
 ## Lifecycle semantics
 
@@ -103,6 +113,16 @@ coordinator and no input. Normal identities: 8 READY and 8 consumed, 0 duplicate
 unexplained, 0 desync, 0 failures; full-source 4 READY per source. Counterfactual A to A keeps
 real pixels and substitutes round-2 identity with round-1 before consensus: 8 READY, 8 consumed,
 4 witnessed, 0 duplicates, 0 desync, 0 failures. Exact visual repeats stay fail-closed.
+Normal identities run through the FULL production coordinator path and therefore prove the
+same-frame status and observation binding. The counterfactual A to A replay intentionally runs
+in evaluation below that boundary: the substituted consensus decision is not the observation
+decision, so the production coordinator rightly rejects such a pairing and no bypass flag or
+unchecked accept path was added to production for it. Instead an evaluation-only harness pairs
+production witness measurements of the real pixels with the substituted production consensus
+status and the production lifecycle tracker by hand, consuming the same observation immediately
+as the coordinator would. It copies neither the structural algorithm nor the lifecycle
+algorithm. Its 8 READY, 8 consumed, and 4 witnessed headline validates the production witness
+plus lifecycle A to A capability under synthetic identity substitution.
 
 ## Limits and next
 

@@ -53,15 +53,23 @@ import java.util.Optional;
  * explicit reset. {@code UNCERTAIN}, {@code CAPTURE_ERROR}, {@code UNSUPPORTED_FRAME} and
  * {@code CANDIDATE_RECOGNITION} never disarm or reset the baseline.
  *
- * <p>Frame binding: consumption is bound to the accepted observation. The coordinator remembers
- * which {@link FrameRecognitionObservation} produced the latest currently-stable ready round;
- * {@code consumeReadyRound} rejects any other, older, closed or missing observation, so the
+* <p>Frame binding: consumption is bound to the accepted observation. The coordinator remembers
+* which {@link FrameRecognitionObservation} produced the latest currently-stable ready round;
+* {@code consumeReadyRound} rejects any other, older, closed or missing observation, so the
  * replacement baseline always comes from the exact accepted frame whose round is consumed and
  * never from unrelated content. A stale, different or closed observation can therefore never
  * re-arm the witness. When the latest accepted consensus stops being stably the ready identity,
  * the previous observation stops being consumable (the pending round itself follows the existing
  * lifecycle semantics); when the pending identity re-stabilizes, the new current observation
- * becomes the consumable one. Desynchronization leaves no consumable observation.
+* becomes the consumable one. Desynchronization leaves no consumable observation.
+ *
+ * <p>Accept-time pairing is bound the same way: a decision-bearing consensus status is only
+ * accepted together with the observation whose decision object it wraps, by reference
+ * identity. A status from one frame paired with the pixels of another is rejected before
+ * anything is measured or mutated, so lifecycle evidence can never mix a decision from frame
+ * X with structural content from frame Y. Decision-free conditions (waiting, capture errors,
+ * unsupported frames) use the no-observation overload, which rejects decision-bearing
+ * statuses for the same reason.
  *
  * <p>Ownership: observations passed to {@code accept} and {@code consumeReadyRound} are borrowed
  * and never closed or retained beyond a validation reference here. The coordinator owns the
@@ -110,15 +118,26 @@ public final class RoundLifecycleWitnessCoordinator implements AutoCloseable {
     }
 
     /**
-     * Feeds one consensus output without content: behaves exactly like the witness-free lifecycle
-     * (used for frames that produced no normalized puzzle, such as capture problems).
+     * Feeds one consensus output that genuinely has no decision and no frame, such as
+     * {@code WAITING}, {@code CAPTURE_ERROR} or {@code UNSUPPORTED_FRAME}: behaves exactly
+     * like the witness-free lifecycle and clears the consumable-observation reference.
      *
-     * @param consensusStatus output of {@link RecognitionConsensusTracker} for one frame
+     * <p>A decision-bearing status ({@code UNCERTAIN}, {@code RECOGNIZED},
+     * {@code CANDIDATE_RECOGNITION}, {@code STABLE_RECOGNIZED}) is rejected here: it must go
+     * through the frame-bound {@link #accept(LiveRecognitionStatus,
+     * FrameRecognitionObservation)} overload with its own observation, otherwise a caller
+     * could bypass the same-frame production path.
+     *
+     * @param consensusStatus decision-free consensus output for one frame
      * @return lifecycle snapshot after this observation
      */
     public RoundLifecycleStatus accept(LiveRecognitionStatus consensusStatus) {
         requireOpen();
         Objects.requireNonNull(consensusStatus, "consensusStatus");
+        if (consensusStatus.decision().isPresent()) {
+            throw new IllegalArgumentException("A decision-bearing consensus status requires "
+                    + "its own frame observation: use accept(status, observation)");
+        }
         RoundLifecycleStatus update =
                 lifecycle.accept(consensusStatus, PuzzleContentTransitionEvidence.absent());
         // No frame content arrived with this observation, so nothing is consumable through an
@@ -133,20 +152,23 @@ public final class RoundLifecycleWitnessCoordinator implements AutoCloseable {
      *
      * <p>The observation is borrowed: its puzzle is read for the witness comparison and the
      * observation itself is remembered for consumption validation, but it is never closed
-     * here. A {@code null} observation means no content is available for this frame and
-     * behaves like no witness. While the witness is unarmed the lifecycle behaves exactly
-     * as without it.
+     * here. While the witness is unarmed the lifecycle behaves exactly as without it.
      *
-     * <p>The same-frame invariant is established here: the observation becomes the consumable
+     * <p>Same-frame invariant: the consensus status must wrap the very same
+     * {@code RecognitionDecision} object as the observation, by reference identity. The
+     * consensus tracker returns statuses that carry the exact decision object passed into
+     * it, so this check proves the status and the normalized puzzle originate from the
+     * same observed frame. A mismatch is rejected before any witness measurement, any
+     * lifecycle mutation and any consumable-observation change.
+     *
+     * <p>Consumption binding is established here: the observation becomes the consumable
      * one only while the returned snapshot shows {@code ROUND_READY} whose ready identity is
      * still the current stable identity. Any later non-stable observation, any observation
      * of another identity, an explicit no-frame accept, a reset or a desynchronization
      * clears it.
      *
-     * @param consensusStatus output of {@link RecognitionConsensusTracker} for the decision
-     *        of {@code observation}
-     * @param observation owned observation of the same frame, or {@code null} when no frame
-     *        content is available; borrowed, not closed
+     * @param consensusStatus consensus output wrapping the decision of {@code observation}
+     * @param observation owned observation of the same frame; required, borrowed, not closed
      * @return lifecycle snapshot after this observation, with {@code transitionWitnessUsed} set
      *         only when an otherwise-suppressed repeated consumed identity became ready because
      *         independent content change was confirmed
@@ -155,22 +177,25 @@ public final class RoundLifecycleWitnessCoordinator implements AutoCloseable {
             FrameRecognitionObservation observation) {
         requireOpen();
         Objects.requireNonNull(consensusStatus, "consensusStatus");
-        if (observation != null && observation.closed()) {
+        Objects.requireNonNull(observation, "observation");
+        if (observation.closed()) {
             throw new IllegalStateException(
                     "The observation is closed; its normalized puzzle is released");
         }
-        PuzzleContentTransitionEvidence evidence;
-        if (observation == null || !witness.isArmed()) {
-            evidence = PuzzleContentTransitionEvidence.absent();
-        } else {
-            evidence = witness.measure(observation.puzzle());
+        if (consensusStatus.decision().isEmpty()
+                || consensusStatus.decision().get() != observation.decision()) {
+            throw new IllegalArgumentException("The consensus status does not wrap the "
+                    + "decision of the given observation: status and observation must come "
+                    + "from the same observed frame");
         }
+        PuzzleContentTransitionEvidence evidence = witness.isArmed()
+                ? witness.measure(observation.puzzle())
+                : PuzzleContentTransitionEvidence.absent();
         RoundLifecycleStatus update = lifecycle.accept(consensusStatus, evidence);
         if (update.state() == RoundLifecycleState.ROUND_READY
                 && update.stable().isPresent()
                 && update.ready().isPresent()
-                && update.stable().get().equals(update.ready().get())
-                && observation != null) {
+                && update.stable().get().equals(update.ready().get())) {
             consumableObservation = observation;
         } else {
             consumableObservation = null;

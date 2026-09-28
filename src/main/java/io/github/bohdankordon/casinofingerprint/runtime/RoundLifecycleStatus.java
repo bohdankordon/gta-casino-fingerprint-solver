@@ -25,10 +25,15 @@ import java.util.Optional;
  * @param stableIdentity identity of the most recently accepted consensus observation, when
  *        that observation is still {@code STABLE_RECOGNIZED}; {@code null} otherwise
  * @param newRoundReady true when this accepted observation produced a {@code NEW_ROUND_READY}
- *        event, i.e. a stable-episode onset of an identity that may become a new round
+ *        event: a stable-episode onset of an identity that may become a new round, or a
+ *        continued {@code STABLE_RECOGNIZED} frame of the consumed identity that became a
+ *        new round through the witnessed transition path (no new episode onset required
+ *        there)
  * @param consumedIdentityRepeated true when this accepted observation re-observed the
  *        already-consumed identity and was therefore suppressed: a stable-episode onset of
- *        the consumed identity is never promoted to a new round
+ *        the consumed identity stays suppressed unless independent structural transition
+ *        evidence permits the witnessed path, which reports {@code newRoundReady} with
+ *        {@code transitionWitnessUsed} instead
  * @param desynchronizedNow true when this accepted observation caused the transition into
  *        {@code DESYNCHRONIZED}; later observations while already desynchronized report
  *        {@code false} because the transition happened only once

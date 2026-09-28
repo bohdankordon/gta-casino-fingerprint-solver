@@ -2,6 +2,7 @@ package io.github.bohdankordon.casinofingerprint.runtime;
 
 import io.github.bohdankordon.casinofingerprint.gameplay.ExtractedPuzzleFrame;
 import io.github.bohdankordon.casinofingerprint.matching.NormalizedPuzzleFrame;
+import io.github.bohdankordon.casinofingerprint.recognition.RecognitionDecision;
 import io.github.bohdankordon.casinofingerprint.vision.StructuralNormalizer;
 import java.util.ArrayList;
 import java.util.List;
@@ -70,14 +71,15 @@ final class ProductionWitnessTestSupport {
     }
 
     /**
-     * One owned observation around a fresh synthetic normalized puzzle. The caller closes the
-     * returned observation, which releases the puzzle. The embedded decision is a synthetic
-     * placeholder: coordinator tests pass consensus statuses separately, so only the puzzle
-     * content matters here.
+     * One owned observation around a fresh synthetic normalized puzzle with the given
+     * decision object. The caller closes the returned observation, which releases the
+     * puzzle. Coordinator tests pair each observation with a consensus status wrapping the
+     * very same decision object, mirroring the production same-frame invariant.
      */
-    static FrameRecognitionObservation observation(long targetSeed, long[] candidateSeeds) {
-        return new FrameRecognitionObservation(Stage5TestSupport.syntheticUncertain(),
-                normalizedFrame(targetSeed, candidateSeeds), 0, 0);
+    static FrameRecognitionObservation observation(RecognitionDecision decision, long targetSeed,
+            long[] candidateSeeds) {
+        return new FrameRecognitionObservation(decision, normalizedFrame(targetSeed,
+                candidateSeeds), 0, 0);
     }
 
     /** Eight candidate seeds {@code base..base+7}. */

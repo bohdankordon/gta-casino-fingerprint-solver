@@ -29,7 +29,9 @@ import io.github.bohdankordon.casinofingerprint.runtime.RecognitionConsensusTrac
 import io.github.bohdankordon.casinofingerprint.runtime.RecognitionIdentity;
 import io.github.bohdankordon.casinofingerprint.runtime.RoundLifecycleState;
 import io.github.bohdankordon.casinofingerprint.runtime.RoundLifecycleStatus;
+import io.github.bohdankordon.casinofingerprint.runtime.RoundLifecycleTracker;
 import io.github.bohdankordon.casinofingerprint.runtime.RoundLifecycleWitnessCoordinator;
+import io.github.bohdankordon.casinofingerprint.runtime.PuzzleContentTransitionWitness;
 import java.io.File;
 import java.io.IOException;
 import java.io.PrintStream;
@@ -64,16 +66,26 @@ import java.util.Objects;
  * rule (the 0.50 cut and the 6-of-9 count live in production) and no second copy of the lifecycle
  * algorithm. Two replay modes run over the same decoded frames:
  *
- * <ul>
- *   <li>NORMAL identities: the real recognition flow, verified per hack (one coordinator per
- *       hack) and per full source (one coordinator per source across all padded hack regions).
- *       The structural witness must not create extra events inside the real rounds.</li>
+* <ul>
+*   <li>NORMAL identities: the real recognition flow, verified per hack (one coordinator per
+*       hack) and per full source (one coordinator per source across all padded hack regions).
+ *       The structural witness must not create extra events inside the real rounds. This mode
+ *       runs through the FULL production coordinator path and therefore proves the
+ *       same-frame status/observation binding.</li>
  *   <li>COUNTERFACTUAL A -&gt; A: per hack, the real pixels are kept but every recognized round-2
  *       decision is evaluation-substituted with the round-1 identity before consensus, so the
  *       consensus timeline stays {@code STABLE A} across the visual change (possibly with no new
  *       episode onset) while the production witness still sees the real B pixels. The second
- *       {@code READY(A)} must be witness-permitted.</li>
- * </ul>
+ *       {@code READY(A)} must be witness-permitted. This mode intentionally runs BELOW the
+ *       coordinator boundary in an evaluation-only harness over the actual production
+ *       primitives ({@code PuzzleContentTransitionWitness}, {@code RoundLifecycleTracker},
+ *       {@code PuzzleContentTransitionEvidence}): the substituted consensus decision is not
+ *       the observation decision, so the production coordinator rightly rejects such a
+ *       pairing. The harness pairs production witness evidence from the real pixels with the
+ *       substituted production consensus status and the production lifecycle tracker by hand,
+ *       consuming the same observation immediately like the coordinator would. It copies no
+ *       structural or lifecycle algorithm.</li>
+* </ul>
  *
  * <p>Recognition only: no keyboard, mouse, navigation or solving action, no sleep, no timing
  * constant in any decision, and no matcher, threshold, ROI or runtime resolution change. Every
@@ -319,6 +331,29 @@ public final class ProductionWitnessReplay {
         return List.copyOf(hacks);
     }
 
+    /**
+     * Read view over one replay scope used by the summary builders. Both the full
+     * production-coordinator replay and the evaluation-only counterfactual harness expose
+     * the same counters.
+     */
+    private interface ReplayState {
+        List<RecognitionIdentity> readyIdentities();
+
+        List<Long> readyFrames();
+
+        List<Long> readyTimestampsMs();
+
+        long consumedEvents();
+
+        long suppressedOnsets();
+
+        long desyncEvents();
+
+        long consumeFailures();
+
+        long witnessedEvents();
+    }
+
     /** Index of the padded window containing {@code seconds}, or -1. */
     private static int windowIndexAt(List<TimeWindow> windows, double seconds) {
         for (int index = 0; index < windows.size(); index++) {
@@ -330,27 +365,27 @@ public final class ProductionWitnessReplay {
     }
 
     private static Summary hackSummary(
-            RecordingSource source, HackScope hack, ScopeReplay replay, String scope) {
+            RecordingSource source, HackScope hack, ReplayState replay, String scope) {
         RecognitionIdentity roundOne = hack.roundOneLifecycleAnswer();
         RecognitionIdentity roundTwo = hack.roundTwoLifecycleAnswer();
         boolean counterfactual = "COUNTERFACTUAL_HACK".equals(scope);
         List<RecognitionIdentity> expected = counterfactual
                 ? List.of(roundOne, roundOne)
                 : List.of(roundOne, roundTwo);
-        boolean orderCorrect = replay.readyIdentities.equals(expected);
+        boolean orderCorrect = replay.readyIdentities().equals(expected);
         long duplicateCarryover = 0;
         long unexplained = 0;
         if (counterfactual) {
             // In the A -&gt; A replay both ready events claim the round-1 identity; a third ready
             // of the same identity after the second consumption would be a duplicate.
-            duplicateCarryover = Math.max(0, replay.readyIdentities.stream()
+            duplicateCarryover = Math.max(0, replay.readyIdentities().stream()
                     .filter(roundOne::equals).count() - 2);
-            unexplained = replay.readyIdentities.stream()
+            unexplained = replay.readyIdentities().stream()
                     .filter(identity -> !identity.equals(roundOne)).count();
         } else {
-            duplicateCarryover = replay.readyIdentities.stream().skip(1)
+            duplicateCarryover = replay.readyIdentities().stream().skip(1)
                     .filter(roundOne::equals).count();
-            unexplained = replay.readyIdentities.stream()
+            unexplained = replay.readyIdentities().stream()
                     .filter(identity -> !identity.equals(roundOne) && !identity.equals(roundTwo))
                     .count();
         }
@@ -364,10 +399,10 @@ public final class ProductionWitnessReplay {
         if (unexplained > 0) {
             notes.append("a READY identity matches no expected round; ");
         }
-        if (replay.desyncEvents > 0) {
+        if (replay.desyncEvents() > 0) {
             notes.append("the tracker desynchronized; ");
         }
-        if (replay.consumeFailures > 0) {
+        if (replay.consumeFailures() > 0) {
             notes.append("immediate consumption was rejected; ");
         }
         if (notes.isEmpty()) {
@@ -377,21 +412,22 @@ public final class ProductionWitnessReplay {
             } else {
                 notes.append("round 1 and round 2 became READY once each, in annotated order");
             }
-            if (replay.suppressedOnsets > 0) {
+            if (replay.suppressedOnsets() > 0) {
                 notes.append(String.format(Locale.ROOT,
-                        "; %d same-identity onset(s) suppressed", replay.suppressedOnsets));
+                        "; %d same-identity onset(s) suppressed", replay.suppressedOnsets()));
             }
-            if (replay.witnessedEvents > 0) {
+            if (replay.witnessedEvents() > 0) {
                 notes.append(String.format(Locale.ROOT,
-                        "; %d witnessed repeated-identity READY", replay.witnessedEvents));
+                        "; %d witnessed repeated-identity READY", replay.witnessedEvents()));
             }
         }
         return new Summary(scope, source.sourceId(), source.resolution(), hack.hackId(),
-                roundOne.code(), roundTwo.code(), replay.readyIdentities.size(),
-                replay.consumedEvents, replay.witnessedEvents, joinCodes(replay.readyIdentities),
-                joinLongs(replay.readyFrames), joinLongs(replay.readyTimestampsMs),
+                roundOne.code(), roundTwo.code(), replay.readyIdentities().size(),
+                replay.consumedEvents(), replay.witnessedEvents(),
+                joinCodes(replay.readyIdentities()),
+                joinLongs(replay.readyFrames()), joinLongs(replay.readyTimestampsMs()),
                 Boolean.toString(orderCorrect), duplicateCarryover, unexplained,
-                replay.desyncEvents, replay.consumeFailures, notes.toString().trim());
+                replay.desyncEvents(), replay.consumeFailures(), notes.toString().trim());
     }
 
     private static Summary fullSourceSummary(
@@ -622,7 +658,7 @@ public final class ProductionWitnessReplay {
      * witness-lifecycle coordinator. The simulated consumption is evaluation only and sends no
      * input.
      */
-    private static final class ScopeReplay implements AutoCloseable {
+    private static final class ScopeReplay implements AutoCloseable, ReplayState {
         private final RecognitionConsensusTracker consensus =
                 new RecognitionConsensusTracker(REQUIRED_CONSECUTIVE_FRAMES);
         private final RoundLifecycleWitnessCoordinator coordinator =
@@ -637,6 +673,46 @@ public final class ProductionWitnessReplay {
         private long witnessedEvents;
         private boolean closed;
 
+        @Override
+        public List<RecognitionIdentity> readyIdentities() {
+            return List.copyOf(readyIdentities);
+        }
+
+        @Override
+        public List<Long> readyFrames() {
+            return List.copyOf(readyFrames);
+        }
+
+        @Override
+        public List<Long> readyTimestampsMs() {
+            return List.copyOf(readyTimestampsMs);
+        }
+
+        @Override
+        public long consumedEvents() {
+            return consumedEvents;
+        }
+
+        @Override
+        public long suppressedOnsets() {
+            return suppressedOnsets;
+        }
+
+        @Override
+        public long desyncEvents() {
+            return desyncEvents;
+        }
+
+        @Override
+        public long consumeFailures() {
+            return consumeFailures;
+        }
+
+        @Override
+        public long witnessedEvents() {
+            return witnessedEvents;
+        }
+
         /**
          * Feeds one observed frame through consensus and then the production coordinator,
          * immediately consuming every ready round like a future well-behaved consumer would.
@@ -645,25 +721,6 @@ public final class ProductionWitnessReplay {
                 long frameIndex, long timestampMs, FrameRecognitionObservation observation,
                 List<Event> events) {
             LiveRecognitionStatus status = consensus.accept(observation.decision());
-            RoundLifecycleStatus update =
-                    coordinator.accept(status, observation);
-            acceptUpdate(replayScope, sourceId, resolution, hackId, frameIndex, timestampMs,
-                    status, observation, update, events);
-        }
-
-        /**
-         * Counterfactual A -&gt; A feed: the real decision is evaluation-substituted with the
-         * round-1 identity when it claims the round-2 identity, while the production witness
-         * still sees the real pixels of the same frame.
-         */
-        void acceptCounterfactual(String replayScope, String sourceId, String resolution,
-                int hackId, long frameIndex, long timestampMs,
-                FrameRecognitionObservation observation, RecognitionIdentity roundOne,
-                RecognitionIdentity roundTwo, List<Event> events) {
-            RecognitionDecision decision = observation.decision();
-            RecognitionDecision substituted =
-                    substitute(decision, roundOne, roundTwo);
-            LiveRecognitionStatus status = consensus.accept(substituted);
             RoundLifecycleStatus update =
                     coordinator.accept(status, observation);
             acceptUpdate(replayScope, sourceId, resolution, hackId, frameIndex, timestampMs,
@@ -731,6 +788,153 @@ public final class ProductionWitnessReplay {
             if (!closed) {
                 closed = true;
                 coordinator.close();
+            }
+        }
+    }
+
+    /**
+     * Evaluation-only counterfactual harness: pairs the actual production witness, the
+     * actual production lifecycle tracker and the actual production evidence with a
+     * substituted consensus identity, deliberately BELOW the production coordinator
+     * boundary.
+     *
+     * <p>The production coordinator intentionally rejects this pairing (the substituted
+     * consensus decision is not the observation decision), so this harness reproduces the
+     * coordinator glue by hand: production witness measurement of the real pixels,
+     * production tracker acceptance of the substituted status, and immediate consumption
+     * of the same observation with baseline re-arm on its content. It copies no
+     * structural scoring algorithm and no lifecycle algorithm. Its purpose is testing the
+     * hypothetical A -&gt; A branch, not the production same-frame coordinator boundary,
+     * which only the normal replay validates.
+     */
+    private static final class CounterfactualScope implements AutoCloseable, ReplayState {
+        private final RecognitionConsensusTracker consensus =
+                new RecognitionConsensusTracker(REQUIRED_CONSECUTIVE_FRAMES);
+        private final RoundLifecycleTracker lifecycle = new RoundLifecycleTracker();
+        private final PuzzleContentTransitionWitness witness =
+                new PuzzleContentTransitionWitness();
+        private final List<RecognitionIdentity> readyIdentities = new ArrayList<>();
+        private final List<Long> readyFrames = new ArrayList<>();
+        private final List<Long> readyTimestampsMs = new ArrayList<>();
+        private long consumedEvents;
+        private long suppressedOnsets;
+        private long desyncEvents;
+        private long consumeFailures;
+        private long witnessedEvents;
+        private boolean closed;
+
+        @Override
+        public List<RecognitionIdentity> readyIdentities() {
+            return List.copyOf(readyIdentities);
+        }
+
+        @Override
+        public List<Long> readyFrames() {
+            return List.copyOf(readyFrames);
+        }
+
+        @Override
+        public List<Long> readyTimestampsMs() {
+            return List.copyOf(readyTimestampsMs);
+        }
+
+        @Override
+        public long consumedEvents() {
+            return consumedEvents;
+        }
+
+        @Override
+        public long suppressedOnsets() {
+            return suppressedOnsets;
+        }
+
+        @Override
+        public long desyncEvents() {
+            return desyncEvents;
+        }
+
+        @Override
+        public long consumeFailures() {
+            return consumeFailures;
+        }
+
+        @Override
+        public long witnessedEvents() {
+            return witnessedEvents;
+        }
+
+        /**
+         * Feeds one observed frame with evaluation-substituted identity: the real decision
+         * is rewritten to the round-1 identity when it claims round-2, while the production
+         * witness still measures the real pixels of the same observation.
+         */
+        void accept(String replayScope, String sourceId, String resolution, int hackId,
+                long frameIndex, long timestampMs, FrameRecognitionObservation observation,
+                RecognitionIdentity roundOne, RecognitionIdentity roundTwo,
+                List<Event> events) {
+            RecognitionDecision substituted =
+                    substitute(observation.decision(), roundOne, roundTwo);
+            LiveRecognitionStatus status = consensus.accept(substituted);
+            PuzzleContentTransitionEvidence evidence = witness.isArmed()
+                    ? witness.measure(observation.puzzle())
+                    : PuzzleContentTransitionEvidence.absent();
+            RoundLifecycleStatus update = lifecycle.accept(status, evidence);
+            if (!update.newRoundReady() && !update.consumedIdentityRepeated()
+                    && !update.desynchronizedNow()) {
+                return;
+            }
+            String consumedImmediately = "";
+            String consumedCode = code(update.consumedIdentity());
+            if (update.newRoundReady()) {
+                RecognitionIdentity ready = update.ready()
+                        .orElseThrow(() -> new IllegalStateException(
+                                "A NEW_ROUND_READY update must expose a ready identity"));
+                try (PuzzleContentTransitionWitness.PreparedBaseline staged =
+                        witness.prepare(observation.puzzle())) {
+                    RecognitionIdentity consumed = lifecycle.consumeReadyRound();
+                    if (!consumed.equals(ready)) {
+                        throw new IllegalStateException(
+                                "Consumed " + consumed.code() + " but ready was "
+                                        + ready.code());
+                    }
+                    witness.install(staged);
+                    consumedEvents++;
+                    consumedImmediately = "true";
+                    consumedCode = consumed.code();
+                } catch (IllegalStateException e) {
+                    consumeFailures++;
+                    consumedImmediately = "false";
+                }
+                readyIdentities.add(ready);
+                readyFrames.add(frameIndex);
+                readyTimestampsMs.add(timestampMs);
+                if (update.transitionWitnessUsed()) {
+                    witnessedEvents++;
+                }
+            }
+            if (update.consumedIdentityRepeated()) {
+                suppressedOnsets++;
+            }
+            if (update.desynchronizedNow()) {
+                desyncEvents++;
+            }
+            events.add(new Event(replayScope, sourceId, resolution, hackId, frameIndex,
+                    timestampMs, status.state(), code(identityOrNull(status)),
+                    update.state(),
+                    update.newRoundReady()
+                            ? (update.transitionWitnessUsed() ? "NEW_ROUND_READY_WITNESSED"
+                                    : "NEW_ROUND_READY")
+                            : update.consumedIdentityRepeated() ? "SAME_IDENTITY_SUPPRESSED"
+                            : "DESYNCHRONIZED",
+                    code(update.readyIdentity()), consumedCode, consumedImmediately,
+                    update.transitionWitnessUsed(), evidence.changedRegionCount()));
+        }
+
+        @Override
+        public void close() {
+            if (!closed) {
+                closed = true;
+                witness.close();
             }
         }
     }
@@ -852,10 +1056,10 @@ public final class ProductionWitnessReplay {
                 double lastWindowEnd = paddedWindows.get(paddedWindows.size() - 1).endSeconds();
 
                 Map<Integer, ScopeReplay> hackReplays = new LinkedHashMap<>();
-                Map<Integer, ScopeReplay> counterfactualReplays = new LinkedHashMap<>();
+                Map<Integer, CounterfactualScope> counterfactualReplays = new LinkedHashMap<>();
                 for (HackScope hack : hacks) {
                     hackReplays.put(hack.hackId(), new ScopeReplay());
-                    counterfactualReplays.put(hack.hackId(), new ScopeReplay());
+                    counterfactualReplays.put(hack.hackId(), new CounterfactualScope());
                 }
                 ScopeReplay fullSource = new ScopeReplay();
                 try {
@@ -888,7 +1092,7 @@ public final class ProductionWitnessReplay {
                                         source.resolution(), hack.hackId(), frameIndex, millis,
                                         observation, events);
                                 counterfactualReplays.get(hack.hackId())
-                                        .acceptCounterfactual("COUNTERFACTUAL_HACK",
+                                        .accept("COUNTERFACTUAL_HACK",
                                                 source.sourceId(), source.resolution(),
                                                 hack.hackId(), frameIndex, millis, observation,
                                                 hack.roundOneLifecycleAnswer(),
@@ -920,7 +1124,7 @@ public final class ProductionWitnessReplay {
                     for (ScopeReplay replay : hackReplays.values()) {
                         replay.close();
                     }
-                    for (ScopeReplay replay : counterfactualReplays.values()) {
+                    for (CounterfactualScope replay : counterfactualReplays.values()) {
                         replay.close();
                     }
                     fullSource.close();
