@@ -13,6 +13,27 @@ The numbers below were produced by the frozen system. Every failure they contain
 measured; nothing was tuned to make the dataset pass, and Stage 6C/6D (any change at all) has not
 started.
 
+## How a nominal-round disagreement is read
+
+The round annotations are approximate by a few tenths of a second, so the first frames of an
+interval can still show the previous round while the annotation has already crossed into the next
+one. Reporting every such frame as a recognition error would be a claim the ground truth cannot
+support. Each recognized frame inside a nominal round is therefore classified as:
+
+| category | meaning |
+| --- | --- |
+| CURRENT_ROUND_MATCH | the prediction equals the nominal round's target AND candidate set |
+| PREVIOUS_ROUND_CARRYOVER | the prediction equals the immediately preceding annotated round of the SAME source and the SAME hack |
+| UNEXPLAINED_MISMATCH | the prediction matches neither: the high-severity recognition error category |
+| UNCERTAIN | the policy refused to recognize the frame |
+
+"Previous round" is strictly the immediately preceding annotation of the same source and the same
+hack: carryover never crosses a hack boundary, and the first round of a hack has no previous round,
+so a disagreement there is always unexplained. No time tolerance is used anywhere in this rule - the
+distinction is purely which annotated answer the prediction equals - so a prediction is never
+silently promoted to carryover. Every raw value (frame index, timestamp, predicted target, predicted
+candidate set, evidence) stays in the per-frame data either way.
+
 ## Dataset
 
 Two independent recordings of the complete Diamond Casino Heist vault segment (ordinary gameplay,
@@ -82,23 +103,23 @@ Per frame the benchmark classifies exactly one of `CORRECT_RECOGNIZED`, `WRONG_R
 
 Positive frames (every frame of the eight annotated rounds):
 
-| source | resolution | frames | correct | uncertain | wrong recognized | correct % | wrong % |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| recording_1440p | 2560x1440 | 1499 | 1491 | 7 | 1 | 99.47 | 0.07 |
-| recording_1080p | 1920x1080 | 2255 | 2188 | 32 | 35 | 97.03 | 1.55 |
+| source | resolution | frames | current-round match | previous-round carryover | unexplained mismatch | uncertain |
+| --- | --- | --- | --- | --- | --- | --- |
+| recording_1440p | 2560x1440 | 1499 | 1491 (99.47%) | 1 (0.07%) | 0 | 7 |
+| recording_1080p | 1920x1080 | 2255 | 2188 (97.03%) | 35 (1.55%) | 0 | 32 |
 
 Per round:
 
-| source | round | frames | correct | uncertain | wrong | target |
-| --- | --- | --- | --- | --- | --- | --- |
-| recording_1440p | H1R1 | 487 | 482 | 5 | 0 | FP_4 |
-| recording_1440p | H1R2 | 457 | 457 | 0 | 0 | FP_3 |
-| recording_1440p | H2R1 | 300 | 298 | 2 | 0 | FP_1 |
-| recording_1440p | H2R2 | 255 | 254 | 0 | 1 | FP_3 |
-| recording_1080p | H1R1 | 507 | 494 | 13 | 0 | FP_3 |
-| recording_1080p | H1R2 | 725 | 708 | 0 | 17 | FP_1 |
-| recording_1080p | H2R1 | 515 | 502 | 13 | 0 | FP_3 |
-| recording_1080p | H2R2 | 508 | 484 | 6 | 18 | FP_4 |
+| source | round | frames | current | carryover | unexplained | uncertain | target |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| recording_1440p | H1R1 | 487 | 482 | 0 | 0 | 5 | FP_4 |
+| recording_1440p | H1R2 | 457 | 457 | 0 | 0 | 0 | FP_3 |
+| recording_1440p | H2R1 | 300 | 298 | 0 | 0 | 2 | FP_1 |
+| recording_1440p | H2R2 | 255 | 254 | 1 | 0 | 0 | FP_3 |
+| recording_1080p | H1R1 | 507 | 494 | 0 | 0 | 13 | FP_3 |
+| recording_1080p | H1R2 | 725 | 708 | 17 | 0 | 0 | FP_1 |
+| recording_1080p | H2R1 | 515 | 502 | 0 | 0 | 13 | FP_3 |
+| recording_1080p | H2R2 | 508 | 484 | 18 | 0 | 6 | FP_4 |
 
 Negative gameplay:
 
@@ -133,21 +154,30 @@ also where every uncertain frame sits:
 
 No frame in the middle of a round stayed uncertain.
 
-## The 36 wrong recognitions
+## The 36 nominal-round annotation disagreements
 
-Every `WRONG_RECOGNIZED` frame is listed in `target/stage6-benchmark-report.txt`. All 36 are the
-same finding:
+Every disagreement is listed in `target/stage6-benchmark-report.txt` with its frame index, timestamp,
+nominal answer, previous-round answer and prediction. All 36 are the same finding:
 
-- they sit 0.016-0.61 s after the approximate start of a round;
-- their predicted answer is exactly the PREVIOUS annotated round's answer;
-- the screen at that moment still shows the previous round, because the annotation boundary is
-  approximate by design.
+    36 nominal-round annotation disagreements
+      - 36 previous-round carryover
+      -  0 unexplained mismatches
 
-So the frozen matcher is not misreading a puzzle: it is reading the previous puzzle correctly while
-the benchmark's approximate interval already counts the frame as part of the next round. This is a
-boundary/state-machine finding, not a matcher finding, and it is exactly the kind of thing the
-annotation contract warns about. The frames are reported, not excluded, and nothing was tuned for
-them.
+Each of them:
+
+- sits 0.016-0.61 s after the approximate start of a round;
+- predicts exactly the PREVIOUS annotated round's target AND candidate set;
+- is decoded from a frame where the screen still shows the previous round, because the annotation
+  boundary is approximate by design.
+
+The frozen matcher is therefore not misreading a puzzle: it is reading the previous puzzle correctly
+while the approximate interval already counts the frame as part of the next round. Calling that a
+matcher failure would be a claim the ground truth cannot support, which is exactly why the benchmark
+separates carryover from an unexplained mismatch. Nothing was excluded, no interval was trimmed and
+no timestamp was moved: the same 36 frames are in the per-frame data with their raw predictions.
+
+An unexplained mismatch would be a frame whose prediction equals neither the nominal nor the
+previous round's answer; on this dataset there are none, on either resolution.
 
 ## Consensus replay
 
@@ -156,30 +186,40 @@ Every per-frame decision sequence is replayed through the UNMODIFIED production
 answers. One event is recorded per stable episode onset, because the tracker keeps reporting the
 same stable answer for every frame of an episode.
 
-| scope | stable correct | stable wrong | stable false | first stable correct | latency from round start |
-| --- | --- | --- | --- | --- | --- |
-| recording_1440p H1R1 | yes | no | no | 17.600 s | 100 ms |
-| recording_1440p H1R2 | yes | no | no | 34.100 s | 100 ms |
-| recording_1440p H2R1 | yes | no | no | 119.400 s | 150 ms |
-| recording_1440p H2R2 | yes | no | no | 129.867 s | 117 ms |
-| recording_1080p H1R1 | yes | no | no | 40.791 s | 541 ms |
-| recording_1080p H1R2 | yes | yes | no | 58.929 s | 679 ms |
-| recording_1080p H2R1 | yes | no | no | 134.033 s | 533 ms |
-| recording_1080p H2R2 | yes | yes | no | 152.205 s | 705 ms |
-| recording_1440p strict negative | n/a | n/a | NO | - | - |
-| recording_1080p strict negative | n/a | n/a | NO | - | - |
-| recording_1440p full replay | yes | no | no | - | - |
-| recording_1080p full replay | yes | no | no | - | - |
+Stable episodes are classified with the same rule as single frames, plus two location categories:
+`STABLE_UNLABELED_TRANSITION` for a stable answer inside a hack window - or inside its padded
+transition zone - but outside every approximate round interval, where no frame-exact round ground
+truth exists, and `STABLE_FALSE` for a stable answer in strict negative gameplay.
+
+| scope | stable correct | previous-round carryover | unexplained mismatch | unlabeled transition | stable false | first stable correct | latency from round start |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| recording_1440p H1R1 | yes | no | no | no | no | 17.600 s | 100 ms |
+| recording_1440p H1R2 | yes | no | no | no | no | 34.100 s | 100 ms |
+| recording_1440p H2R1 | yes | no | no | no | no | 119.400 s | 150 ms |
+| recording_1440p H2R2 | yes | no | no | no | no | 129.867 s | 117 ms |
+| recording_1080p H1R1 | yes | no | no | no | no | 40.791 s | 541 ms |
+| recording_1080p H1R2 | yes | yes | no | no | no | 58.929 s | 679 ms |
+| recording_1080p H2R1 | yes | no | no | no | no | 134.033 s | 533 ms |
+| recording_1080p H2R2 | yes | yes | no | no | no | 152.205 s | 705 ms |
+| recording_1440p strict negative | n/a | n/a | n/a | n/a | NO | - | - |
+| recording_1080p strict negative | n/a | n/a | n/a | n/a | NO | - | - |
+| recording_1440p full replay | yes | no | no | no | no | - | - |
+| recording_1080p full replay | yes | no | no | no | no | - | - |
 
 All eight rounds reach a stable correct answer, within 100-150 ms on the 1440p recording and within
-0.53-0.71 s on the evaluation-only 1080p geometry.
+0.53-0.71 s on the evaluation-only 1080p geometry:
 
-The two "stable wrong" findings are the same boundary effect as the wrong frames: at the very start
+    2 stable previous-round carryover episodes
+    0 stable unexplained mismatches
+    0 stable false answers
+
+The two carryover episodes are the same boundary effect as the disagreeing frames: at the very start
 of the annotated 1080p H1R2 and H2R2 intervals the previous round is still on screen, so the tracker
 correctly stabilizes the previous round's answer for a few frames before the new puzzle appears
-(58.343 s and 151.585 s). Both rounds then stabilize the correct answer as well. No stable false
-answer occurred anywhere, and the low-rate replay over both complete recordings found no stale
-consensus across a transition and no stable answer outside the hack windows.
+(58.343 s and 151.585 s). Both rounds then stabilize the correct answer as well (58.929 s and
+152.205 s). No stable false answer occurred anywhere, and the low-rate replay over both complete
+recordings found no stale consensus across a transition and no stable answer outside the hack
+windows.
 
 ## 1080p: evaluation-only geometry hypothesis
 
@@ -203,9 +243,10 @@ resized, no ROI is tuned and no coordinate is shifted. The result is used only b
 LiveRecognitionMain still supports 2560x1440 only. 1080p is NOT production support, and this stage
 makes no claim that the 0.75 hypothesis generalizes to other UI scales or aspect ratios.
 
-The measured result on that hypothesis is 97.03% correct / 1.55% wrong / 1.42% uncertain on 2255
-frames with zero false positives, i.e. the hypothesis is promising but unproven, and it is still
-missing the one thing production support would need: a user-captured manifest for that resolution.
+The measured result on that hypothesis is 97.03% current-round matches, 1.55% previous-round
+carryover, 0 unexplained mismatches and 1.42% uncertain on 2255 frames with zero false positives,
+i.e. the hypothesis is promising but unproven, and it is still missing the one thing production
+support would need: a user-captured manifest for that resolution.
 
 ## The real wrong-selection round
 
@@ -234,10 +275,10 @@ fragment matching or the assignment.
 Nothing here justifies a threshold change, and none was made. The measurements point at three
 separate questions for a later stage:
 
-1. Round-start boundary handling. A stale stable answer is available for roughly the first 0.6 s of
-   a round, and the intended automation design recognizes before the first Enter, so a future
-   state machine must not act on an answer that belongs to the previous round. This is a state
-   machine question, not a matcher question.
+1. Round-start boundary handling. A stable PREVIOUS-ROUND CARRYOVER answer is available for roughly
+   the first 0.6 s of a round, and the intended automation design recognizes before the first Enter,
+   so a future state machine must not act on an answer that belongs to the previous round. This is a
+   state machine question, not a matcher question, and it needs no threshold change.
 2. FP_2 coverage. FP_2 has no real-game round at all; more recordings are needed before any claim
    about all four fingerprints is possible.
 3. The target-score gate is the binding constraint at round boundaries: 11 frames failed only that
@@ -251,6 +292,9 @@ separate questions for a later stage:
 - FP_2 has no real-game coverage in this dataset.
 - 1920x1080 uses an evaluation-only derived geometry; the live runtime still supports 2560x1440 only.
 - `UNCERTAIN` is a refusal, not an absent puzzle, and is never counted as a wrong answer.
+- The carryover classification is exact but depends on the previous round's annotation: it requires
+  the prediction to equal that round's target and candidate set, so a wrong previous annotation
+  would show up as an unexplained mismatch rather than as carryover.
 - The ERROR timing in the wrong-selection round was located by visual inspection, not by a
   machine-labeled detector.
 

@@ -338,8 +338,12 @@ public final class RecordingBenchmark {
                 log.println("positive pass " + source.sourceId() + " ...");
                 long positiveStarted = System.nanoTime();
                 Map<String, ConsensusReplay> roundReplays = new LinkedHashMap<>();
+                Map<String, RecordingRoundAnnotation> previousRounds = new LinkedHashMap<>();
                 for (RecordingRoundAnnotation round : rounds) {
                     roundReplays.put(round.scopeId(), new ConsensusReplay());
+                    // Previous round means the immediately preceding annotation of the SAME source
+                    // and the SAME hack; the first round of a hack has none.
+                    previousRounds.put(round.scopeId(), annotations.previousRound(round).orElse(null));
                 }
                 FrameSelection roundFrames = (frameIndex, seconds) -> rounds.stream()
                         .anyMatch(round -> round.window().contains(seconds));
@@ -350,8 +354,8 @@ public final class RecordingBenchmark {
                     scan(decoder, roundFrames, (frameIndex, seconds, frame) -> {
                         RecordingRoundAnnotation round = roundAt(rounds, seconds);
                         FrameRecognitionResult result = pipeline.recognize(frame);
-                        positiveRows.add(PositiveRow.from(round, frameIndex,
-                                Math.round(seconds * 1000.0), result.decision()));
+                        positiveRows.add(PositiveRow.from(round, previousRounds.get(round.scopeId()),
+                                frameIndex, Math.round(seconds * 1000.0), result.decision()));
                         roundReplays.get(round.scopeId()).accept(
                                 frameIndex, seconds * 1000.0, result.decision());
                         positiveThisSource[0]++;
@@ -434,14 +438,16 @@ public final class RecordingBenchmark {
 
                 for (RecordingRoundAnnotation round : rounds) {
                     consensusRows.add(BenchmarkSummaries.roundConsensus(
-                            round, positiveRows, roundReplays.get(round.scopeId())));
+                            round, previousRounds.get(round.scopeId()), positiveRows,
+                            roundReplays.get(round.scopeId())));
                 }
                 consensusRows.add(BenchmarkSummaries.negativeConsensus(
                         source.sourceId(), source.resolution(), negativeReplay,
                         BenchmarkSummaries.SCOPE_STRICT_NEGATIVE, "outside-hack-windows",
                         hackWindows));
                 consensusRows.add(BenchmarkSummaries.fullReplayConsensus(
-                        source.sourceId(), source.resolution(), fullReplay, hackWindows, rounds));
+                        source.sourceId(), source.resolution(), fullReplay, hackWindows,
+                        negativeWindows, rounds));
 
                 long sampledFalse = sampledNegativeRows.stream()
                         .filter(row -> row.sourceId().equals(source.sourceId()))
@@ -782,6 +788,15 @@ public final class RecordingBenchmark {
         text.append("normalizer, ROI, assignment or policy threshold was changed before, during or after\n");
         text.append("it, and no coordinate was tuned to the measured result. Positive and negative\n");
         text.append("populations are reported separately and are never merged into one accuracy number.\n\n");
+        text.append("Interpretation rule for nominal-round disagreements: the round annotations are\n");
+        text.append("approximate by a few tenths of a second, so the first frames of an interval can still\n");
+        text.append("show the previous round while the annotation has already crossed into the next one.\n");
+        text.append("A recognized frame that disagrees with the nominal round is therefore reported as\n");
+        text.append("PREVIOUS-ROUND CARRYOVER when - and only when - its target AND selected candidate set\n");
+        text.append("equal the immediately preceding annotated round of the same source and the same hack.\n");
+        text.append("Every other disagreement is an UNEXPLAINED MISMATCH and stays the high-severity\n");
+        text.append("recognition error category. No time tolerance is applied anywhere in this rule; the\n");
+        text.append("distinction is purely which annotated answer the prediction equals.\n\n");
         text.append("generated         : ").append(LocalDateTime.now()).append('\n');
         text.append("local recordings  : ").append(RecordingSource.LOCAL_DIRECTORY_REL)
                 .append(" (ignored, never committed, never uploaded)\n");
@@ -868,16 +883,27 @@ public final class RecordingBenchmark {
 
         text.append("9. Per-round results\n");
         text.append("--------------------\n");
+        text.append("  Nominal-round classification of every benchmarked frame\n");
         text.append(String.format(Locale.ROOT,
-                "  %-16s %-6s %6s %8s %7s %8s %9s %9s %9s %9s %9s %9s%n",
-                "source", "round", "frames", "correct", "wrong", "uncert.", "minTarget",
-                "p05Target", "medTarget", "minMargin", "minMean", "minWeakest"));
+                "    %-16s %-6s %6s %9s %9s %8s %8s%n",
+                "source", "round", "frames", "current", "carryover", "unexpl.", "uncert."));
         for (RoundSummary summary : roundSummaries) {
             text.append(String.format(Locale.ROOT,
-                    "  %-16s %-6s %6d %8d %7d %8d %9.4f %9.4f %9.4f %9.4f %9.4f %9.4f%n",
+                    "    %-16s %-6s %6d %9d %9d %8d %8d%n",
                     summary.sourceId(), summary.scopeId(), summary.frames(),
-                    summary.correctRecognized(), summary.wrongRecognized(), summary.uncertain(),
-                    summary.minTargetScore(), summary.p05TargetScore(), summary.medianTargetScore(),
+                    summary.currentRoundMatch(), summary.previousRoundCarryover(),
+                    summary.unexplainedMismatch(), summary.uncertain()));
+        }
+        text.append("  Evidence minima over every benchmarked frame of the round (boundary frames included)\n");
+        text.append(String.format(Locale.ROOT,
+                "    %-16s %-6s %9s %9s %9s %9s %9s %9s%n",
+                "source", "round", "minTarget", "p05Target", "medTarget", "minMargin", "minMean",
+                "minWeakest"));
+        for (RoundSummary summary : roundSummaries) {
+            text.append(String.format(Locale.ROOT,
+                    "    %-16s %-6s %9.4f %9.4f %9.4f %9.4f %9.4f %9.4f%n",
+                    summary.sourceId(), summary.scopeId(), summary.minTargetScore(),
+                    summary.p05TargetScore(), summary.medianTargetScore(),
                     summary.minTargetMargin(), summary.minAssignmentMean(),
                     summary.minWeakestAssignedPair()));
         }
@@ -891,9 +917,11 @@ public final class RecordingBenchmark {
                 .append(" consecutive identical recognized frames.\n");
         for (ConsensusSummaryRow row : consensusRows) {
             text.append(String.format(Locale.ROOT,
-                    "  %-16s %-16s %-18s stableCorrect=%-5s stableWrong=%-5s stableFalse=%-5s%n",
+                    "  %-16s %-16s %-18s correct=%-5s carryover=%-5s unexpl=%-5s "
+                            + "transition=%-5s false=%-5s%n",
                     row.sourceId(), row.scope(), row.scopeId(), row.stableCorrect(),
-                    row.stableWrong(), row.stableFalse()));
+                    row.stablePreviousRoundCarryover(), row.stableUnexplainedMismatch(),
+                    row.stableUnlabeledTransition(), row.stableFalse()));
             if (row.firstStableCorrectMs() != null) {
                 text.append(String.format(Locale.ROOT,
                         "      first correct frame %.3f s, first stable correct %.3f s, "
@@ -901,13 +929,23 @@ public final class RecordingBenchmark {
                         row.firstCorrectRecognizedMs() / 1000.0, row.firstStableCorrectMs() / 1000.0,
                         row.stableCorrectLatencyMs()));
             }
-            if (row.firstStableWrongOrFalseMs() != null) {
+            if (row.firstStableNonCorrectMs() != null) {
                 text.append(String.format(Locale.ROOT,
-                        "      first stable wrong/false answer at %.3f s%n",
-                        row.firstStableWrongOrFalseMs() / 1000.0));
+                        "      first stable non-correct answer at %.3f s%n",
+                        row.firstStableNonCorrectMs() / 1000.0));
             }
             text.append("      ").append(row.detail()).append('\n');
         }
+        text.append("  Categories\n");
+        text.append("    STABLE_CORRECT                  the nominal round's annotated answer\n");
+        text.append("    STABLE_PREVIOUS_ROUND_CARRYOVER the previous round's answer of the same hack,\n");
+        text.append("                                    during the approximate round boundary\n");
+        text.append("    STABLE_UNEXPLAINED_MISMATCH     a stable answer nothing explains (high severity)\n");
+        text.append("    STABLE_UNLABELED_TRANSITION     inside a hack window or its padded transition\n");
+        text.append("                                    zone but outside every approximate round\n");
+        text.append("                                    interval, where no frame-exact round ground truth\n");
+        text.append("                                    exists (diagnostic, not a matcher failure)\n");
+        text.append("    STABLE_FALSE                    strict negative gameplay: a real false positive\n");
         text.append('\n');
 
         text.append("11. Wrong-selection / ERROR round\n");
@@ -920,9 +958,9 @@ public final class RecordingBenchmark {
         appendWorstMetrics(text, sources, positiveRows);
         text.append('\n');
 
-        text.append("13. Every WRONG_RECOGNIZED positive frame\n");
-        text.append("-----------------------------------------\n");
-        appendWrongFrames(text, positiveRows, annotations);
+        text.append("13. Every nominal-round annotation disagreement\n");
+        text.append("----------------------------------------------\n");
+        appendNominalRoundDisagreements(text, positiveRows, annotations);
         text.append('\n');
 
         text.append("14. Every false-positive negative frame\n");
@@ -930,14 +968,23 @@ public final class RecordingBenchmark {
         appendFalsePositives(text, negativeRows, exhaustiveRows);
         text.append('\n');
 
-        text.append("15. Stable wrong / stable false findings\n");
-        text.append("----------------------------------------\n");
-        text.append("  stable wrong answer inside a round : ")
-                .append(consensusRows.stream().anyMatch(ConsensusSummaryRow::stableWrong))
-                .append('\n');
-        text.append("  stable false answer on gameplay    : ")
-                .append(consensusRows.stream().anyMatch(ConsensusSummaryRow::stableFalse))
-                .append('\n');
+        text.append("15. Stable findings by category\n");
+        text.append("------------------------------\n");
+        text.append("  stable correct answers                   : ")
+                .append(countScopes(consensusRows, ConsensusSummaryRow::stableCorrect))
+                .append(" scope(s)\n");
+        text.append("  stable previous-round carryover episodes : ")
+                .append(countScopes(consensusRows, ConsensusSummaryRow::stablePreviousRoundCarryover))
+                .append(" scope(s)\n");
+        text.append("  stable unexplained mismatches            : ")
+                .append(countScopes(consensusRows, ConsensusSummaryRow::stableUnexplainedMismatch))
+                .append(" scope(s)  <- high severity\n");
+        text.append("  stable unlabeled transitions             : ")
+                .append(countScopes(consensusRows, ConsensusSummaryRow::stableUnlabeledTransition))
+                .append(" scope(s)  (diagnostic only)\n");
+        text.append("  stable false answers on gameplay         : ")
+                .append(countScopes(consensusRows, ConsensusSummaryRow::stableFalse))
+                .append(" scope(s)  <- high severity\n");
         text.append('\n');
 
         text.append("16. Tuning statement\n");
@@ -955,7 +1002,11 @@ public final class RecordingBenchmark {
         text.append("  - FP_2 has no round in this dataset, so these recordings say nothing about FP_2\n");
         text.append("    robustness; the absence of FP_2 failures here is not evidence about FP_2.\n");
         text.append("  - Annotation intervals are approximate; a frame at a boundary may belong to a\n");
-        text.append("    transition rather than to the steady puzzle.\n");
+        text.append("    transition rather than to the steady puzzle. That is why a nominal-round\n");
+        text.append("    disagreement is reported as previous-round carryover when the prediction is\n");
+        text.append("    exactly the previous round's answer, and why a stable answer inside a hack\n");
+        text.append("    transition is reported as an unlabeled transition instead of a wrong answer.\n");
+        text.append("    Neither case is a proven matcher failure, and neither is excluded from the data.\n");
         text.append("  - 1920x1080 uses an evaluation-only derived geometry. The live runtime still\n");
         text.append("    supports 2560x1440 only.\n");
         text.append("  - UNCERTAIN is a refusal, not an absent puzzle, and is never counted as wrong.\n\n");
@@ -980,28 +1031,36 @@ public final class RecordingBenchmark {
 
     private static void appendPositiveTable(StringBuilder text, SourceRun run,
             List<PositiveRow> positiveRows, List<RoundSummary> roundSummaries) {
-        text.append(String.format(Locale.ROOT, "    %-6s %6s %8s %8s %8s %9s %9s%n",
-                "round", "frames", "correct", "wrong", "uncert.", "correct%", "wrong%"));
+        text.append(String.format(Locale.ROOT, "    %-6s %6s %9s %9s %8s %8s %9s %9s%n",
+                "round", "frames", "current", "carryover", "unexpl.", "uncert.", "current%",
+                "carry%"));
         List<PositiveRow> sourceRows = positiveRows.stream()
                 .filter(row -> row.sourceId().equals(run.sourceId())).toList();
         for (RoundSummary summary : roundSummaries) {
             if (!summary.sourceId().equals(run.sourceId())) {
                 continue;
             }
-            text.append(String.format(Locale.ROOT, "    %-6s %6d %8d %8d %8d %9.2f %9.2f%n",
-                    summary.scopeId(), summary.frames(), summary.correctRecognized(),
-                    summary.wrongRecognized(), summary.uncertain(), summary.correctPercent(),
-                    summary.wrongPercent()));
+            text.append(String.format(Locale.ROOT, "    %-6s %6d %9d %9d %8d %8d %9.2f %9.2f%n",
+                    summary.scopeId(), summary.frames(), summary.currentRoundMatch(),
+                    summary.previousRoundCarryover(), summary.unexplainedMismatch(),
+                    summary.uncertain(), summary.currentRoundPercent(),
+                    summary.carryoverPercent()));
         }
         long correct = sourceRows.stream().filter(row -> row.classification()
-                == PositiveFrameClassifier.Classification.CORRECT_RECOGNIZED).count();
-        long wrong = sourceRows.stream().filter(row -> row.classification()
-                == PositiveFrameClassifier.Classification.WRONG_RECOGNIZED).count();
+                == PositiveFrameClassifier.Classification.CURRENT_ROUND_MATCH).count();
+        long carryover = sourceRows.stream().filter(row -> row.classification()
+                == PositiveFrameClassifier.Classification.PREVIOUS_ROUND_CARRYOVER).count();
+        long unexplained = sourceRows.stream().filter(row -> row.classification()
+                == PositiveFrameClassifier.Classification.UNEXPLAINED_MISMATCH).count();
         long frames = sourceRows.size();
-        text.append(String.format(Locale.ROOT, "    %-6s %6d %8d %8d %8d %9.2f %9.2f%n",
-                "TOTAL", frames, correct, wrong, frames - correct - wrong,
+        text.append(String.format(Locale.ROOT, "    %-6s %6d %9d %9d %8d %8d %9.2f %9.2f%n",
+                "TOTAL", frames, correct, carryover, unexplained,
+                frames - correct - carryover - unexplained,
                 frames == 0 ? 0.0 : 100.0 * correct / frames,
-                frames == 0 ? 0.0 : 100.0 * wrong / frames));
+                frames == 0 ? 0.0 : 100.0 * carryover / frames));
+        text.append("    nominal-round disagreements: ").append(carryover + unexplained)
+                .append(" (").append(carryover).append(" previous-round carryover, ")
+                .append(unexplained).append(" unexplained mismatch(es))\n");
     }
 
     private static void appendNegativeResults(StringBuilder text, SourceRun run,
@@ -1057,51 +1116,52 @@ public final class RecordingBenchmark {
                 Percentiles.median(sorted)));
     }
 
-    private static void appendWrongFrames(StringBuilder text, List<PositiveRow> positiveRows,
-            RecordingAnnotationCatalog annotations) {
-        List<PositiveRow> wrong = positiveRows.stream()
-                .filter(row -> row.classification()
-                        == PositiveFrameClassifier.Classification.WRONG_RECOGNIZED)
+    private static void appendNominalRoundDisagreements(StringBuilder text,
+            List<PositiveRow> positiveRows, RecordingAnnotationCatalog annotations) {
+        List<PositiveRow> disagreements = positiveRows.stream()
+                .filter(PositiveRow::disagreesWithCurrentRound)
                 .toList();
-        if (wrong.isEmpty()) {
-            text.append("  ZERO wrong recognitions on positive puzzle frames.\n");
+        long carryover = disagreements.stream().filter(row -> row.classification()
+                == PositiveFrameClassifier.Classification.PREVIOUS_ROUND_CARRYOVER).count();
+        long unexplained = disagreements.stream().filter(row -> row.classification()
+                == PositiveFrameClassifier.Classification.UNEXPLAINED_MISMATCH).count();
+        if (disagreements.isEmpty()) {
+            text.append("  ZERO nominal-round annotation disagreements on positive puzzle frames.\n");
             return;
         }
-        long carryingPreviousRound = 0;
-        long nearRoundStart = 0;
-        text.append("  ").append(wrong.size()).append(" wrong-recognized frame(s):\n");
-        for (PositiveRow row : wrong) {
-            RecordingRoundAnnotation previous = previousRound(annotations, row);
-            boolean carriesPreviousAnswer = previous != null
-                    && previous.target() == row.predictedTarget()
-                    && previous.correctCandidatesSorted().equals(row.predictedCandidates());
+        text.append(String.format(Locale.ROOT,
+                "  %d nominal-round annotation disagreement(s): %d previous-round carryover, "
+                        + "%d unexplained mismatch(es)%n",
+                disagreements.size(), carryover, unexplained));
+        text.append("  These frames are counted as disagreements with the nominal annotation; they are\n");
+        text.append("  NOT all recognition errors. A disagreement is carryover when its prediction equals\n");
+        text.append("  the previous annotated round's target AND candidate set exactly (no time tolerance\n");
+        text.append("  is applied). Only unexplained mismatches are proven recognition errors.\n");
+        for (PositiveRow row : disagreements) {
             RecordingRoundAnnotation round = roundOf(annotations, row);
             double secondsFromRoundStart = round == null
                     ? Double.NaN
                     : row.timestampMs() / 1000.0 - round.startSeconds();
-            if (carriesPreviousAnswer) {
-                carryingPreviousRound++;
-            }
-            if (Double.isFinite(secondsFromRoundStart) && secondsFromRoundStart <= 1.0) {
-                nearRoundStart++;
-            }
             text.append(String.format(Locale.ROOT,
-                    "    %s %s %.3f s (+%.3f s after the approximate round start) frame %d "
-                            + "expected %s %s but got %s %s (%s)%s%n",
-                    row.sourceId(), row.scopeId(), row.timestampMs() / 1000.0,
-                    secondsFromRoundStart, row.frameIndex(),
+                    "    [%s] %s %s %.3f s (+%.3f s after the nominal round start) frame %d: "
+                            + "nominal %s %s; previous round %s %s %s; predicted %s %s (%s)%n",
+                    row.classification(), row.sourceId(), row.scopeId(),
+                    row.timestampMs() / 1000.0, secondsFromRoundStart, row.frameIndex(),
                     row.expectedTarget(), BenchmarkRows.candidates(row.expectedCandidates()),
+                    row.previousRoundScope().isEmpty() ? "(none)" : row.previousRoundScope(),
+                    row.previousRoundTarget() == null ? "-" : row.previousRoundTarget(),
+                    row.previousRoundCandidates().isEmpty()
+                            ? "-" : BenchmarkRows.candidates(row.previousRoundCandidates()),
                     row.predictedTarget(), BenchmarkRows.candidates(row.predictedCandidates()),
-                    row.wrongKind(),
-                    carriesPreviousAnswer ? " [this is the PREVIOUS round's answer]" : ""));
+                    row.mismatchKind()));
         }
         text.append(String.format(Locale.ROOT,
-                "  context: %d of %d wrong frames carry the previous annotated round's answer and "
-                        + "%d lie within 1.0 s of their own round start.%n",
-                carryingPreviousRound, wrong.size(), nearRoundStart));
-        text.append("  context: the annotation intervals are approximate; these frames sit in the "
-                + "transition at the start of a round, where the screen still shows the previous "
-                + "round. They are reported, not excluded, and nothing was tuned for them.\n");
+                "  context: %d of %d disagreements are previous-round carryover and %d are unexplained.%n",
+                carryover, disagreements.size(), unexplained));
+        text.append("  context: the annotation intervals are approximate by design, so the first frames of\n");
+        text.append("  an interval can still show the previous round. The pipeline reads that previous\n");
+        text.append("  puzzle correctly; calling it a matcher failure would be a claim the ground truth\n");
+        text.append("  cannot support. Nothing was excluded and nothing was tuned for these frames.\n");
     }
 
     private static RecordingRoundAnnotation roundOf(RecordingAnnotationCatalog annotations,
@@ -1114,16 +1174,9 @@ public final class RecordingBenchmark {
         return null;
     }
 
-    private static RecordingRoundAnnotation previousRound(RecordingAnnotationCatalog annotations,
-            PositiveRow row) {
-        RecordingRoundAnnotation previous = null;
-        for (RecordingRoundAnnotation round : annotations.roundsFor(row.sourceId())) {
-            if (round.endSeconds() <= row.timestampMs() / 1000.0
-                    && (previous == null || round.endSeconds() > previous.endSeconds())) {
-                previous = round;
-            }
-        }
-        return previous;
+    private static long countScopes(List<ConsensusSummaryRow> rows,
+            java.util.function.Predicate<ConsensusSummaryRow> predicate) {
+        return rows.stream().filter(predicate).count();
     }
 
     private static void appendFalsePositives(StringBuilder text, List<NegativeRow> negativeRows,
@@ -1202,12 +1255,16 @@ public final class RecordingBenchmark {
                     previous, previousAnswer);
         }
         long correct = rows.stream().filter(row -> row.classification()
-                == PositiveFrameClassifier.Classification.CORRECT_RECOGNIZED).count();
-        long wrong = rows.stream().filter(row -> row.classification()
-                == PositiveFrameClassifier.Classification.WRONG_RECOGNIZED).count();
+                == PositiveFrameClassifier.Classification.CURRENT_ROUND_MATCH).count();
+        long carryover = rows.stream().filter(row -> row.classification()
+                == PositiveFrameClassifier.Classification.PREVIOUS_ROUND_CARRYOVER).count();
+        long unexplained = rows.stream().filter(row -> row.classification()
+                == PositiveFrameClassifier.Classification.UNEXPLAINED_MISMATCH).count();
         text.append(String.format(Locale.ROOT,
-                "  round totals: %d frames, correct %d, wrong %d, uncertain %d%n",
-                rows.size(), correct, wrong, rows.size() - correct - wrong));
+                "  round totals: %d frames, current-round match %d, previous-round carryover %d, "
+                        + "unexplained mismatch %d, uncertain %d%n",
+                rows.size(), correct, carryover, unexplained,
+                rows.size() - correct - carryover - unexplained));
         text.append("  ERROR timing itself was not machine-labeled (no OCR was used); the dense "
                 + "contact sheet under target/ is for visual inspection.\n");
     }

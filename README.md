@@ -105,10 +105,13 @@ does not tune.
   into fixtures, uploaded or attached to a pull request. No full gameplay frame is committed either;
   every preview the benchmark generates stays under `target/`.
 - Measured baseline (unchanged production pipeline, `RecognitionPolicy.defaultPolicy()`): 1440p
-  1491 of 1499 correct, 7 uncertain, 1 wrong; 1080p (evaluation-only 0.75 geometry) 2188 of 2255
-  correct, 32 uncertain, 35 wrong; zero false positives on 1331 sampled and 7989 exhaustive
-  strict-negative gameplay frames; all eight rounds reach a stable correct answer; every one of the
-  36 wrong frames is a round-start boundary frame that carries the previous round's answer.
+  1491 of 1499 frames match the nominal round, 1 previous-round carryover, 0 unexplained mismatch,
+  7 uncertain; 1080p (evaluation-only 0.75 geometry) 2188 of 2255 match, 35 previous-round
+  carryover, 0 unexplained mismatch, 32 uncertain; zero false positives on 1331 sampled and 7989
+  exhaustive strict-negative gameplay frames; all eight rounds reach a stable correct answer, with
+  2 stable previous-round carryover episodes and 0 stable unexplained mismatches. A nominal-round
+  disagreement counts as carryover only when the prediction equals the previous annotated round's
+  target AND candidate set exactly; no time tolerance is applied.
 - 1920x1080 uses an evaluation-only derived geometry (uniform 0.75 edge scaling of the production
   layout, native frames, no resize, no ROI tuning). `LiveRecognitionMain` still supports 2560x1440
   only.

@@ -15,15 +15,22 @@ import java.util.stream.Collectors;
  *
  * <p>Rows hold plain values only, never a {@link RecognitionDecision}: a decision keeps the whole
  * ranked assignment search alive, so retaining one per frame would make a full-recording pass grow
- * without bound. A row is written for every benchmarked frame, including every failure - a bad row
- * is never dropped, filtered or re-labelled.
+ * without bound. A row is written for every benchmarked frame, including every disagreement and
+ * every refusal - nothing is dropped, filtered or re-labelled.
+ *
+ * <p>Every positive row keeps the raw measurement (status, predicted target, predicted candidate
+ * set, evidence) next to the interpretation (classification, mismatch kind, and whether the
+ * prediction equals the nominal or the previous round), so the semantics of a row can always be
+ * re-derived from the row itself.
  */
 public final class BenchmarkRows {
     /** Header of the positive (in-round) frame CSV. */
     public static final String POSITIVE_HEADER =
             "source_id,resolution,hack_id,round_id,frame_index,timestamp_ms,expected_target,"
-                    + "expected_candidates,status,predicted_target,predicted_candidates,classification,"
-                    + "wrong_kind,evidence_strength,uncertainty_reasons,best_target_score,target_margin,"
+                    + "expected_candidates,previous_round_scope,previous_round_target,"
+                    + "previous_round_candidates,status,predicted_target,predicted_candidates,"
+                    + "classification,mismatch_kind,matches_current_round,matches_previous_round,"
+                    + "evidence_strength,uncertainty_reasons,best_target_score,target_margin,"
                     + "best_assignment_mean,weakest_assigned_pair,selection_margin,"
                     + "minimum_fragment_column_margin";
     /** Header of the negative (strict gameplay) frame CSV. */
@@ -34,7 +41,7 @@ public final class BenchmarkRows {
     private BenchmarkRows() {
     }
 
-    /** One benchmarked frame inside an annotated round. */
+    /** One benchmarked frame inside a nominally annotated round. */
     public record PositiveRow(
             String sourceId,
             String resolution,
@@ -44,11 +51,16 @@ public final class BenchmarkRows {
             long timestampMs,
             FingerprintId expectedTarget,
             List<Integer> expectedCandidates,
+            String previousRoundScope,
+            FingerprintId previousRoundTarget,
+            List<Integer> previousRoundCandidates,
             RecognitionResult.Status status,
             FingerprintId predictedTarget,
             List<Integer> predictedCandidates,
             PositiveFrameClassifier.Classification classification,
-            PositiveFrameClassifier.WrongKind wrongKind,
+            PositiveFrameClassifier.MismatchKind mismatchKind,
+            boolean matchesCurrentRound,
+            boolean matchesPreviousRound,
             double evidenceStrength,
             List<UncertaintyReason> uncertaintyReasons,
             double bestTargetScore,
@@ -63,33 +75,53 @@ public final class BenchmarkRows {
             Objects.requireNonNull(resolution, "resolution");
             Objects.requireNonNull(expectedTarget, "expectedTarget");
             expectedCandidates = List.copyOf(expectedCandidates);
+            previousRoundScope = previousRoundScope == null ? "" : previousRoundScope;
+            previousRoundCandidates = previousRoundCandidates == null
+                    ? List.of() : List.copyOf(previousRoundCandidates);
             Objects.requireNonNull(status, "status");
             predictedCandidates = predictedCandidates == null ? List.of() : List.copyOf(predictedCandidates);
             Objects.requireNonNull(classification, "classification");
-            Objects.requireNonNull(wrongKind, "wrongKind");
+            Objects.requireNonNull(mismatchKind, "mismatchKind");
             uncertaintyReasons = List.copyOf(uncertaintyReasons);
         }
 
-        /** Builds one row from a frame decision and the round it was decoded inside. */
-        public static PositiveRow from(RecordingRoundAnnotation round, long frameIndex,
-                long timestampMs, RecognitionDecision decision) {
-            PositiveFrameClassifier.Outcome outcome = PositiveFrameClassifier.classify(decision, round);
+        /**
+         * Builds one row from a frame decision, the nominal round it was decoded inside and that
+         * round's immediately preceding round of the same hack (null for the first round of a hack).
+         */
+        public static PositiveRow from(RecordingRoundAnnotation round,
+                RecordingRoundAnnotation previousRound, long frameIndex, long timestampMs,
+                RecognitionDecision decision) {
+            PositiveFrameClassifier.Outcome outcome =
+                    PositiveFrameClassifier.classify(decision, round, previousRound);
             RecognitionEvidence evidence = decision.evidence();
             RecognitionResult result = decision.result();
             return new PositiveRow(
                     round.sourceId(), round.resolution(), round.hackId(), round.roundId(),
                     frameIndex, timestampMs, round.target(), round.correctCandidatesSorted(),
+                    previousRound == null ? "" : previousRound.scopeId(),
+                    previousRound == null ? null : previousRound.target(),
+                    previousRound == null ? List.of() : previousRound.correctCandidatesSorted(),
                     result.status(), result.fingerprintId().orElse(null),
-                    result.selectedCandidateIndices(), outcome.classification(), outcome.wrongKind(),
-                    evidence.evidenceStrength(), decision.uncertaintyReasons(),
-                    evidence.bestTargetScore(), evidence.targetMargin(),
-                    evidence.bestAssignmentMean(), evidence.weakestAssignedPair(),
-                    evidence.selectionMargin(), evidence.minimumFragmentColumnMargin());
+                    result.selectedCandidateIndices(), outcome.classification(),
+                    outcome.mismatchKind(), outcome.matchesCurrentRound(),
+                    outcome.matchesPreviousRound(), evidence.evidenceStrength(),
+                    decision.uncertaintyReasons(), evidence.bestTargetScore(),
+                    evidence.targetMargin(), evidence.bestAssignmentMean(),
+                    evidence.weakestAssignedPair(), evidence.selectionMargin(),
+                    evidence.minimumFragmentColumnMargin());
         }
 
-        /** {@code H<hack>R<round>}, the annotated scope this frame belongs to. */
+        /** {@code H<hack>R<round>}, the nominal scope this frame belongs to. */
         public String scopeId() {
             return "H" + hackId + "R" + roundId;
+        }
+
+        /** True when the prediction disagrees with the nominal round annotation. */
+        public boolean disagreesWithCurrentRound() {
+            return classification == PositiveFrameClassifier.Classification.PREVIOUS_ROUND_CARRYOVER
+                    || classification
+                            == PositiveFrameClassifier.Classification.UNEXPLAINED_MISMATCH;
         }
     }
 
@@ -143,11 +175,16 @@ public final class BenchmarkRows {
                     .append(row.timestampMs()).append(',')
                     .append(row.expectedTarget()).append(',')
                     .append(candidates(row.expectedCandidates())).append(',')
+                    .append(row.previousRoundScope()).append(',')
+                    .append(row.previousRoundTarget() == null ? "" : row.previousRoundTarget()).append(',')
+                    .append(candidates(row.previousRoundCandidates())).append(',')
                     .append(row.status()).append(',')
                     .append(row.predictedTarget() == null ? "" : row.predictedTarget()).append(',')
                     .append(candidates(row.predictedCandidates())).append(',')
                     .append(row.classification()).append(',')
-                    .append(row.wrongKind()).append(',')
+                    .append(row.mismatchKind()).append(',')
+                    .append(row.matchesCurrentRound()).append(',')
+                    .append(row.matchesPreviousRound()).append(',')
                     .append(number(row.evidenceStrength())).append(',')
                     .append(reasons(row.uncertaintyReasons())).append(',')
                     .append(number(row.bestTargetScore())).append(',')

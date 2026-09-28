@@ -144,25 +144,41 @@ public final class RecordingBenchmarkMain {
         out.println("Stage 6A/6B benchmark summary");
         for (BenchmarkSummaries.ResolutionSummary summary : result.resolutionSummaries()) {
             out.println(String.format(Locale.ROOT,
-                    "  %-16s %-10s %-20s frames %6d correct %6d uncertain %6d wrong %6d false %6d",
+                    "  %-16s %-10s %-20s frames %6d current %6d carryover %6d unexpl %6d "
+                            + "uncertain %6d false %6d",
                     summary.sourceId(), summary.resolution(), summary.population(),
-                    summary.frames(), summary.correct(), summary.uncertain(),
-                    summary.wrongRecognized(), summary.falseRecognized()));
+                    summary.frames(), summary.currentRoundMatch(),
+                    summary.previousRoundCarryover(), summary.unexplainedMismatch(),
+                    summary.uncertain(), summary.falseRecognized()));
         }
-        long wrong = result.roundSummaries().stream().mapToLong(RoundSummary::wrongRecognized).sum();
         long correct = result.roundSummaries().stream()
-                .mapToLong(RoundSummary::correctRecognized).sum();
+                .mapToLong(RoundSummary::currentRoundMatch).sum();
+        long carryover = result.roundSummaries().stream()
+                .mapToLong(RoundSummary::previousRoundCarryover).sum();
+        long unexplained = result.roundSummaries().stream()
+                .mapToLong(RoundSummary::unexplainedMismatch).sum();
         long uncertain = result.roundSummaries().stream().mapToLong(RoundSummary::uncertain).sum();
         out.println(String.format(Locale.ROOT,
-                "  positive totals: correct %d, wrong %d, uncertain %d", correct, wrong, uncertain));
+                "  positive totals: current-round match %d, previous-round carryover %d, "
+                        + "unexplained mismatch %d, uncertain %d",
+                correct, carryover, unexplained, uncertain));
         out.println("  false positives (required sample): " + result.sampledFalsePositives().size());
         for (ConsensusSummaryRow row : result.consensusSummaries()) {
-            if (row.stableWrong() || row.stableFalse()) {
+            if (row.stableUnexplainedMismatch() || row.stableFalse()) {
                 out.println("  HIGH SEVERITY: " + row.sourceId() + ' ' + row.scope() + ' '
-                        + row.scopeId() + " stableWrong=" + row.stableWrong()
+                        + row.scopeId() + " stableUnexplainedMismatch="
+                        + row.stableUnexplainedMismatch()
                         + " stableFalse=" + row.stableFalse());
             }
         }
+        long stableCarryover = result.consensusSummaries().stream()
+                .filter(ConsensusSummaryRow::stablePreviousRoundCarryover).count();
+        long stableTransition = result.consensusSummaries().stream()
+                .filter(ConsensusSummaryRow::stableUnlabeledTransition).count();
+        out.println("  stable previous-round carryover scopes: " + stableCarryover
+                + " (reported, not matcher failures)");
+        out.println("  stable unlabeled transition scopes: " + stableTransition
+                + " (diagnostic only)");
         if (result.sampledFalsePositives().isEmpty()) {
             out.println("  negative gameplay: zero false recognized frames in the required sample");
         }

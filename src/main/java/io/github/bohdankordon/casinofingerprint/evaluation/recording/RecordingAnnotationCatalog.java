@@ -11,6 +11,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 
 /**
@@ -154,6 +155,31 @@ public final class RecordingAnnotationCatalog {
     /** Hack windows of one source, in file order. */
     public List<RecordingHackWindow> hackWindowsFor(String sourceId) {
         return hackWindows.stream().filter(w -> w.sourceId().equals(sourceId)).toList();
+    }
+
+    /**
+     * Immediately preceding annotated round of the SAME source and the SAME hack, in chronological
+     * order, or empty when {@code round} is the first round of its hack.
+     *
+     * <p>This is the only definition of "previous round" the benchmark uses. Carryover never
+     * crosses a hack boundary: ordinary gameplay separates two hacks, so an answer from a different
+     * hack is not a plausible explanation of an observed answer and must stay an unexplained
+     * mismatch.
+     */
+    public Optional<RecordingRoundAnnotation> previousRound(RecordingRoundAnnotation round) {
+        Objects.requireNonNull(round, "round");
+        RecordingRoundAnnotation previous = null;
+        for (RecordingRoundAnnotation candidate : rounds) {
+            if (!candidate.sourceId().equals(round.sourceId())
+                    || candidate.hackId() != round.hackId()
+                    || candidate.startSeconds() >= round.startSeconds()) {
+                continue;
+            }
+            if (previous == null || candidate.startSeconds() > previous.startSeconds()) {
+                previous = candidate;
+            }
+        }
+        return Optional.ofNullable(previous);
     }
 
     /**

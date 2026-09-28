@@ -11,6 +11,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -114,6 +115,57 @@ class RecordingAnnotationCatalogTest {
 
         assertEquals(1, notes.size(), "only one round leaves its approximate hack window");
         assertTrue(notes.get(0).contains("recording_1080p H2R1"), notes.get(0));
+    }
+
+    @Test
+    void previousRoundIsTheImmediatelyPrecedingRoundOfTheSameHack() throws IOException {
+        RecordingAnnotationCatalog catalog = RecordingTestSupport.committedCatalog();
+
+        assertEquals(Optional.empty(), previousScope(catalog, "recording_1440p", "H1R1"));
+        assertEquals(Optional.of("H1R1"), previousScope(catalog, "recording_1440p", "H1R2"));
+        assertEquals(Optional.empty(), previousScope(catalog, "recording_1440p", "H2R1"));
+        assertEquals(Optional.of("H2R1"), previousScope(catalog, "recording_1440p", "H2R2"));
+        assertEquals(Optional.empty(), previousScope(catalog, "recording_1080p", "H1R1"));
+        assertEquals(Optional.of("H1R1"), previousScope(catalog, "recording_1080p", "H1R2"));
+        assertEquals(Optional.empty(), previousScope(catalog, "recording_1080p", "H2R1"));
+        assertEquals(Optional.of("H2R1"), previousScope(catalog, "recording_1080p", "H2R2"));
+    }
+
+    @Test
+    void previousRoundLookupNeverCrossesAHackBoundary(@TempDir Path tempDir) throws IOException {
+        Path rounds = tempDir.resolve("rounds.csv");
+        Path hacks = tempDir.resolve("hacks.csv");
+        StringBuilder csv = new StringBuilder(RecordingAnnotationCatalog.ROUNDS_HEADER).append('\n');
+        // H1R1 ends at 12 s and H2R1 starts at 13 s: chronologically adjacent, different hacks.
+        csv.append("recording_1440p,2560x1440,1,1,10.000,12.000,FP_4,6,5,1,4,1;4;5;6,false,first hack\n");
+        csv.append("recording_1440p,2560x1440,2,1,13.000,15.000,FP_1,3,4,1,6,1;3;4;6,false,second hack\n");
+        csv.append("recording_1440p,2560x1440,2,2,16.000,18.000,FP_3,7,6,4,2,2;4;6;7,false,second hack\n");
+        for (int index = 3; index <= 7; index++) {
+            csv.append("recording_1440p,2560x1440,3,").append(index).append(',')
+                    .append(20 + index * 2).append(".000,")
+                    .append(20 + index * 2 + 1).append(".500,")
+                    .append("FP_4,6,5,1,4,1;4;5;6,false,padding\n");
+        }
+        Files.writeString(rounds, csv.toString(), StandardCharsets.UTF_8);
+        Files.writeString(hacks, RecordingAnnotationCatalog.HACK_WINDOWS_HEADER + "\n"
+                + "recording_1440p,1,9.000,12.400,first\n"
+                + "recording_1440p,2,12.600,18.500,second\n"
+                + "recording_1440p,3,22.000,40.000,third\n", StandardCharsets.UTF_8);
+        RecordingAnnotationCatalog catalog = RecordingAnnotationCatalog.read(rounds, hacks);
+
+        assertEquals(Optional.empty(), previousScope(catalog, "recording_1440p", "H1R1"));
+        assertEquals(Optional.empty(), previousScope(catalog, "recording_1440p", "H2R1"),
+                "the previous hack must never provide a carryover answer");
+        assertEquals(Optional.of("H2R1"), previousScope(catalog, "recording_1440p", "H2R2"));
+    }
+
+    private static Optional<String> previousScope(RecordingAnnotationCatalog catalog,
+            String sourceId, String scopeId) {
+        RecordingRoundAnnotation round = catalog.roundsFor(sourceId).stream()
+                .filter(candidate -> candidate.scopeId().equals(scopeId))
+                .findFirst()
+                .orElseThrow(() -> new IllegalArgumentException("No round " + sourceId + " " + scopeId));
+        return catalog.previousRound(round).map(RecordingRoundAnnotation::scopeId);
     }
 
     @Test
