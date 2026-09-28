@@ -94,10 +94,12 @@ The 5 fps cadence is an integer frame step, `step = max(1, round(fps / 5))`, app
 frame indices: step 6 for both recordings, 5.0000 fps effective for the 1440p source and 4.8333 fps
 for the 1080p source. It is pure arithmetic, so the same recording always yields the same sample.
 
-Per frame the benchmark classifies exactly one of `CORRECT_RECOGNIZED`, `WRONG_RECOGNIZED` or
-`UNCERTAIN` for positive frames, and `FALSE_RECOGNIZED` or `UNCERTAIN` for negative frames.
+Per frame the benchmark classifies a positive frame as `CURRENT_ROUND_MATCH`,
+`PREVIOUS_ROUND_CARRYOVER`, `UNEXPLAINED_MISMATCH` or `UNCERTAIN` (see "How a nominal-round
+disagreement is read" above), and a negative frame as `FALSE_RECOGNIZED` or `UNCERTAIN`.
 `UNCERTAIN` is a refusal by the policy, is never counted as a wrong answer and is never called
-"puzzle absent".
+"puzzle absent". A nominal-round disagreement is never described as "wrong recognized" as a blanket
+term: only an `UNEXPLAINED_MISMATCH` is a recognition error.
 
 ## Measured baseline
 
@@ -217,9 +219,11 @@ The two carryover episodes are the same boundary effect as the disagreeing frame
 of the annotated 1080p H1R2 and H2R2 intervals the previous round is still on screen, so the tracker
 correctly stabilizes the previous round's answer for a few frames before the new puzzle appears
 (58.343 s and 151.585 s). Both rounds then stabilize the correct answer as well (58.929 s and
-152.205 s). No stable false answer occurred anywhere, and the low-rate replay over both complete
-recordings found no stale consensus across a transition and no stable answer outside the hack
-windows.
+152.205 s). 1080p H2R2 re-establishes that same correct answer twice more later in the round
+(168.136 s and 168.929 s, both `FP_4 [1;2;6;7]`), while 1080p H1R2 has a single stable correct
+episode and no later onset. No stable false answer occurred anywhere, and the low-rate replay over
+both complete recordings found no stale consensus across a transition and no stable answer outside
+the hack windows.
 
 ## 1080p: evaluation-only geometry hypothesis
 
@@ -260,12 +264,16 @@ Measured behaviour around the episode (dense 0.25 s contact sheet, visual inspec
 used and the ERROR timing is not machine-labeled):
 
 - the ERROR banner is visible from approximately t = 74.0 s to t = 77.0 s of that round;
-- recognition stayed `CORRECT_RECOGNIZED FP_1 [0;4;6;7]` for the whole episode and for every frame
-  from 58.86 s to 83.24 s (708 consecutive frames);
-- the only wrong frames in the round are the 17 transition frames at its start, which carry the
-  previous round's answer;
-- the stable answer was re-established at 168.136 s and 168.929 s near the end of the round, both
-  times still the correct answer.
+- recognition was `CURRENT_ROUND_MATCH FP_1 [0;4;6;7]` for the whole episode and for every frame
+  from 58.860 s to 83.239 s: 708 consecutive frames, and the round contains exactly two categories,
+  those 708 current-round matches and 17 previous-round carryovers at its start;
+- the 17 nominal-round disagreements at the beginning of the round are `PREVIOUS_ROUND_CARRYOVER`
+  (frames 1688-1704, 58.274-58.860 s, predicting the previous round's `FP_3 [0;1;3;6]`), not wrong
+  frames;
+- there are ZERO `UNEXPLAINED_MISMATCH` frames and ZERO `UNCERTAIN` frames in this round;
+- the round has a single stable correct episode: `STABLE_CORRECT FP_1 [0;4;6;7]` is established at
+  58.929 s (frame 1707, streak 3) and stays the same answer for the remainder of the round, with no
+  later stable episode onset.
 
 So the ERROR UI - a large overlay banner across the puzzle panel - did not disturb target matching,
 fragment matching or the assignment.
