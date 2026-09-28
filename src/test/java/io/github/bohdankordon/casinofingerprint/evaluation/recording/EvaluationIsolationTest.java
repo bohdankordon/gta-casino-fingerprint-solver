@@ -78,7 +78,19 @@ class EvaluationIsolationTest {
                 RecordingBenchmark.LAYOUT_OVERLAY_REL,
                 RecordingBenchmark.ROUND_KEYFRAMES_REL,
                 RecordingBenchmark.ERROR_CASE_REL,
-                EvaluationLayoutScaler.DERIVED_LAYOUT_REL)) {
+                EvaluationLayoutScaler.DERIVED_LAYOUT_REL,
+                io.github.bohdankordon.casinofingerprint.evaluation.recording.transition
+                        .RoundTransitionAnalysis.FRAMES_CSV_REL,
+                io.github.bohdankordon.casinofingerprint.evaluation.recording.transition
+                        .RoundTransitionAnalysis.RUNS_CSV_REL,
+                io.github.bohdankordon.casinofingerprint.evaluation.recording.transition
+                        .RoundTransitionAnalysis.SUMMARY_CSV_REL,
+                io.github.bohdankordon.casinofingerprint.evaluation.recording.transition
+                        .RoundTransitionAnalysis.GUARD_CSV_REL,
+                io.github.bohdankordon.casinofingerprint.evaluation.recording.transition
+                        .RoundTransitionAnalysis.REPORT_REL,
+                io.github.bohdankordon.casinofingerprint.evaluation.recording.transition
+                        .RoundTransitionAnalysis.CONTACT_SHEET_DIRECTORY_REL)) {
             assertTrue(artifact.startsWith("target/"),
                     artifact + " must be build output, never a committed artifact");
         }

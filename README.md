@@ -4,7 +4,7 @@ An early, recognition-only computer-vision prototype for the GTA Online Diamond 
 
 ## Status and scope
 
-Stage 0 provides the Java project, native OpenCV verification, and domain and processing contracts. Stage 1 adds the canonical reference dataset (4 targets, 16 fragments, reproducible crops with manifest, generator and preview). Stage 2 adds representative 2560x1440 gameplay ROI extraction (one target plus eight row-major candidates) and deterministic structural normalization shared by reference and gameplay crops. Stage 3 adds structural matching: the gameplay target is scored against all four reference targets, and all eight candidates are scored against the four reference fragments of the ranked target, producing a complete 8x4 similarity matrix. Stage 4 adds constrained recognition: the matrix is solved as an exact 4-of-8 one-to-one assignment with ambiguity measurements, and a conservative provisional policy turns the evidence into a `RecognitionResult` (recognized vs uncertain). Stage 5 adds the live recognition-only runtime: an AWT/Robot desktop capture backend that selects the exact physical display resolution, monitor discovery and explicit selection, a full-frame recognition pipeline and a three-frame decision consensus behind a command-line runtime with `--list-monitors`, `--once` and `--watch`. Stage 5 reads the screen and prints recognition results only: there is still no keyboard or mouse automation, no automatic solving, no round state machine, no game-process interaction, and only the bundled 2560x1440 fixture layout is supported. Stage 6A/6B adds a real-gameplay recording benchmark: human-verified round annotations for two private local recordings, a frozen-pipeline baseline over every frame of the annotated rounds, a strict negative-gameplay false-positive measurement, a consensus replay and an evaluation-only 1920x1080 geometry hypothesis. Stage 6A/6B changed no matcher, no normalization, no policy threshold and no production runtime support; the recordings themselves are private, local and not committed, and Stage 6C/6D (any tuning at all) has not started.
+Stage 0 provides the Java project, native OpenCV verification, and domain and processing contracts. Stage 1 adds the canonical reference dataset (4 targets, 16 fragments, reproducible crops with manifest, generator and preview). Stage 2 adds representative 2560x1440 gameplay ROI extraction (one target plus eight row-major candidates) and deterministic structural normalization shared by reference and gameplay crops. Stage 3 adds structural matching: the gameplay target is scored against all four reference targets, and all eight candidates are scored against the four reference fragments of the ranked target, producing a complete 8x4 similarity matrix. Stage 4 adds constrained recognition: the matrix is solved as an exact 4-of-8 one-to-one assignment with ambiguity measurements, and a conservative provisional policy turns the evidence into a `RecognitionResult` (recognized vs uncertain). Stage 5 adds the live recognition-only runtime: an AWT/Robot desktop capture backend that selects the exact physical display resolution, monitor discovery and explicit selection, a full-frame recognition pipeline and a three-frame decision consensus behind a command-line runtime with `--list-monitors`, `--once` and `--watch`. Stage 5 reads the screen and prints recognition results only: there is still no keyboard or mouse automation, no automatic solving, no round state machine, no game-process interaction, and only the bundled 2560x1440 fixture layout is supported. Stage 6A/6B adds a real-gameplay recording benchmark: human-verified round annotations for two private local recordings, a frozen-pipeline baseline over every frame of the annotated rounds, a strict negative-gameplay false-positive measurement, a consensus replay and an evaluation-only 1920x1080 geometry hypothesis. Stage 6A/6B changed no matcher, no normalization, no policy threshold and no production runtime support; the recordings themselves are private, local and not committed, and Stage 6C/6D (any tuning at all) has not started. Stage 6C.1A characterizes the round and hack transitions of those recordings at full source frame rate and simulates candidate lifecycle guards offline, so the temporal carryover problem is measured before any state machine is written. Stage 6C.1A implements NO round lifecycle state machine, no round consumption API, no input automation and no sleep, and it changes no production behaviour either.
 
 ## Stack
 
@@ -27,6 +27,7 @@ Stage 0 provides the Java project, native OpenCV verification, and domain and pr
 - `recognition`: exact `ConstrainedAssignmentSolver` over all 1680 legal 4-of-8 assignments, `RecognitionEvidence` measurements, the provisional conservative `RecognitionPolicy`, and `PuzzleRecognitionEngine` producing a `RecognitionDecision` with a `RecognitionResult`; `recognition.evaluation` holds the Stage 4 diagnostics tool.
 - `runtime`: Stage 5 live runtime — `FrameRecognitionPipeline` (one full captured frame to a `RecognitionDecision`, reusing one reference library), `RecognitionConsensusTracker` (consecutive-frame decision consensus), `LiveRecognitionRuntime` (capture loop producing a `LiveRecognitionStatus`) and `LiveRecognitionState`.
 - `evaluation.recording`: Stage 6A/6B real-gameplay benchmark tooling - the committed recording source/round/hack annotation catalogs, a sequential OpenCV `VideoCapture` decoder, the evaluation-only uniform layout scaler, the positive/negative frame classifiers, the aggregate summaries, the `RecognitionConsensusTracker` replay, the local contact-sheet writer and the benchmark entry point. Evaluation only: no production package reads the recording annotations and the private recordings never leave `local-data/`.
+- `evaluation.recording.transition`: Stage 6C.1A full-rate transition characterization - the per-frame temporal trace and its run compression, the three transition summaries (hack entry, inter-round, hack exit), the offline reset experiment, the offline G0-G4 guard simulations and the transition report/contact-sheet tooling. Evaluation only, measurement only: no lifecycle state machine, no round consumption API and no production behaviour.
 
 OpenCV `Mat` results from capture and normalization are owned by their callers and must be closed. `FingerprintSolver` closes the normalized image; the input frame remains the caller's responsibility.
 
@@ -127,6 +128,41 @@ It writes the per-frame results, the round, resolution and consensus summaries, 
 the derived 1080p manifest and the review contact sheets below `target/` (build output, never
 committed).
 
+## Round transition analysis (Stage 6C.1A)
+
+The full-rate round/hack transition characterization is documented in
+[docs/round-transition-analysis.md](docs/round-transition-analysis.md). It answers the temporal
+question Stage 6A/6B left open - what exactly happens at a hack entry, between two rounds and at a
+hack exit - and it does NOT implement the lifecycle state machine that would consume those answers.
+
+Measured on every decoded frame inside each hack window padded by 2.0 s (1890 frames of
+`recording_1440p`, 2552 of `recording_1080p`, twelve transitions):
+
+- every round-to-round switch is direct: 0 of 4 transitions contain an UNCERTAIN decision between
+  the old and the new answer, and the previous round's answer stays recognized and stable until the
+  frame before the new one appears;
+- a consensus reset at the nominal boundary re-stabilizes the OLD answer on 2 of 4 transitions, so a
+  reset alone is not a round-boundary solution;
+- of the offline guards, only the suppress-stable-answers-equal-to-the-consumed-identity rule keeps
+  every observed next round actionable (4 of 4, 0 ms latency) while the old answer never becomes
+  actionable again (0 of 4);
+- 0 unexplained recognized answers and 0 unexplained stable answers occurred during transitions.
+
+Consecutive rounds with the exact same answer identity (fingerprint plus sorted candidate set) do
+not occur in this dataset. Such a case cannot be solved by any answer-identity guard and must fail
+closed until an independent transition witness exists; see the document's UNPROVEN CASES section.
+
+Run it locally (the private recordings must exist first):
+
+```powershell
+.\mvnw.cmd -B -ntp compile exec:java "-Dexec.mainClass=io.github.bohdankordon.casinofingerprint.evaluation.recording.transition.RoundTransitionAnalysisMain"
+```
+
+It writes `target/stage6c-transition-frames.csv`, `target/stage6c-transition-runs.csv`,
+`target/stage6c-transition-summary.csv`, `target/stage6c-guard-simulation.csv`,
+`target/stage6c-transition-report.txt` and the dense local contact sheets under
+`target/stage6c-transition-contact-sheets/` (all build output, never committed).
+
 ## Roadmap
 
 1. Stage 0 - foundation
@@ -137,5 +173,7 @@ committed).
 6. Stage 5 - live screen capture and recognition-only runtime (complete: AWT backend, HiDPI-safe selection, full-frame pipeline, three-frame consensus, CLI; no automation)
 7. Stage 6 - robustness evaluation and tuning
    - Stage 6A/6B - real gameplay recording dataset and frozen baseline benchmark (complete: annotations, private recording ingestion, positive and negative frame benchmarks, consensus replay and an evaluation-only 1080p geometry; no algorithm or policy change)
+   - Stage 6C.1A - full-rate round-transition characterization (complete: per-frame temporal trace, transition summaries, reset experiment, offline guard simulation and a design recommendation; no lifecycle state machine yet)
+   - Stage 6C.1B - the RoundLifecycleTracker itself, fail-closed and event based (NOT started)
    - Stage 6C/6D - any tuning based on the measured baseline (NOT started)
 8. Possible later stage - optional input automation
