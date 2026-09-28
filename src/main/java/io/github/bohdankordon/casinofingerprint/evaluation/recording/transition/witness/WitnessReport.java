@@ -524,6 +524,12 @@ final class WitnessReport {
                 .filter(row -> row.scope() == WitnessScope.SAME_ROUND).count();
         List<WitnessRuleExploration.RuleEvaluation> cleanRules = input.rules().stream()
                 .filter(WitnessRuleExploration.RuleEvaluation::isCleanOnThisDataset).toList();
+        long rulesWithSameRoundTriggers = input.rules().stream()
+                .filter(evaluation -> evaluation.sameRoundFalseTriggers() > 0).count();
+        long rulesMissingATransition = input.rules().stream()
+                .filter(evaluation -> evaluation.sameRoundFalseTriggers() == 0
+                        && evaluation.transitionsDetected() < evaluation.transitionsEvaluated())
+                .count();
         int transitionsEvaluated = input.rules().isEmpty() ? 0
                 : input.rules().get(0).transitionsEvaluated();
         boolean counterfactualOk = !input.counterfactuals().isEmpty()
@@ -560,10 +566,11 @@ final class WitnessReport {
                 "3. Does any candidate produce ZERO false transition events over all observed "
                         + "same-round frames?%n"
                         + "   %d of %d measured same-round frames were evaluated against every "
-                        + "rule; %d rules have%n   zero same-round false triggers and %d rules fired "
-                        + "inside an observed same round.%n\n",
-                sameRoundFrames, sameRoundFrames, cleanRules.size(),
-                (int) (input.rules().size() - cleanRules.size())));
+                        + "rule; %d of the %d rules%n   have zero same-round false triggers, %d "
+                        + "fire inside an observed same round and %d stay%n   quiet there while "
+                        + "missing at least one transition.%n\n",
+                sameRoundFrames, sameRoundFrames, cleanRules.size(), input.rules().size(),
+                rulesWithSameRoundTriggers, rulesMissingATransition));
         text.append(String.format(Locale.ROOT,
                 "4. Do those candidates detect all %d observed transitions?%n   %s%n%n",
                 transitionsEvaluated,
@@ -572,7 +579,8 @@ final class WitnessReport {
                                 + "transitions while staying silent inside a round."
                         : cleanRules.size() + " clean rules detect " + transitionsEvaluated + " of "
                                 + transitionsEvaluated + ", for example "
-                                + cleanRules.get(0).ruleId() + "."));
+                                + input.leadingRules().stream().map(WitnessRule::id).toList()
+                                + "."));
         text.append(String.format(Locale.ROOT,
                 "5. At what frame relative to first new recognized / first new stable?%n"
                         + "   For %s: %n%s%n",
