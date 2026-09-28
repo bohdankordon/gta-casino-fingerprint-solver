@@ -4,7 +4,7 @@ An early, recognition-only computer-vision prototype for the GTA Online Diamond 
 
 ## Status and scope
 
-Stage 0 provides the Java project, native OpenCV verification, and domain and processing contracts. Stage 1 adds the canonical reference dataset (4 targets, 16 fragments, reproducible crops with manifest, generator and preview). Stage 2 adds representative 2560x1440 gameplay ROI extraction (one target plus eight row-major candidates) and deterministic structural normalization shared by reference and gameplay crops. Stage 3 adds structural matching: the gameplay target is scored against all four reference targets, and all eight candidates are scored against the four reference fragments of the ranked target, producing a complete 8x4 similarity matrix. Stage 4 adds constrained recognition: the matrix is solved as an exact 4-of-8 one-to-one assignment with ambiguity measurements, and a conservative provisional policy turns the evidence into a `RecognitionResult` (recognized vs uncertain). Stage 5 adds the live recognition-only runtime: an AWT/Robot desktop capture backend that selects the exact physical display resolution, monitor discovery and explicit selection, a full-frame recognition pipeline and a three-frame decision consensus behind a command-line runtime with `--list-monitors`, `--once` and `--watch`. Stage 5 reads the screen and prints recognition results only: there is still no keyboard or mouse automation, no automatic solving, no round state machine, no game-process interaction, and only the bundled 2560x1440 fixture layout is supported.
+Stage 0 provides the Java project, native OpenCV verification, and domain and processing contracts. Stage 1 adds the canonical reference dataset (4 targets, 16 fragments, reproducible crops with manifest, generator and preview). Stage 2 adds representative 2560x1440 gameplay ROI extraction (one target plus eight row-major candidates) and deterministic structural normalization shared by reference and gameplay crops. Stage 3 adds structural matching: the gameplay target is scored against all four reference targets, and all eight candidates are scored against the four reference fragments of the ranked target, producing a complete 8x4 similarity matrix. Stage 4 adds constrained recognition: the matrix is solved as an exact 4-of-8 one-to-one assignment with ambiguity measurements, and a conservative provisional policy turns the evidence into a `RecognitionResult` (recognized vs uncertain). Stage 5 adds the live recognition-only runtime: an AWT/Robot desktop capture backend that selects the exact physical display resolution, monitor discovery and explicit selection, a full-frame recognition pipeline and a three-frame decision consensus behind a command-line runtime with `--list-monitors`, `--once` and `--watch`. Stage 5 reads the screen and prints recognition results only: there is still no keyboard or mouse automation, no automatic solving, no round state machine, no game-process interaction, and only the bundled 2560x1440 fixture layout is supported. Stage 6A/6B adds a real-gameplay recording benchmark: human-verified round annotations for two private local recordings, a frozen-pipeline baseline over every frame of the annotated rounds, a strict negative-gameplay false-positive measurement, a consensus replay and an evaluation-only 1920x1080 geometry hypothesis. Stage 6A/6B changed no matcher, no normalization, no policy threshold and no production runtime support; the recordings themselves are private, local and not committed, and Stage 6C/6D (any tuning at all) has not started.
 
 ## Stack
 
@@ -26,6 +26,7 @@ Stage 0 provides the Java project, native OpenCV verification, and domain and pr
 - `matching`: structural similarity scoring (translation-tolerant zero-mean normalized cross-correlation), `ReferenceFingerprintLibrary` holding the normalized Stage 1 assets it owns, `TargetMatcher` returning every target score with a deterministic ranking, and `FragmentMatcher` returning the complete 8x4 `FragmentScoreMatrix`; `matching.evaluation` holds the Stage 3 diagnostics tool and the fixture annotation reader.
 - `recognition`: exact `ConstrainedAssignmentSolver` over all 1680 legal 4-of-8 assignments, `RecognitionEvidence` measurements, the provisional conservative `RecognitionPolicy`, and `PuzzleRecognitionEngine` producing a `RecognitionDecision` with a `RecognitionResult`; `recognition.evaluation` holds the Stage 4 diagnostics tool.
 - `runtime`: Stage 5 live runtime — `FrameRecognitionPipeline` (one full captured frame to a `RecognitionDecision`, reusing one reference library), `RecognitionConsensusTracker` (consecutive-frame decision consensus), `LiveRecognitionRuntime` (capture loop producing a `LiveRecognitionStatus`) and `LiveRecognitionState`.
+- `evaluation.recording`: Stage 6A/6B real-gameplay benchmark tooling - the committed recording source/round/hack annotation catalogs, a sequential OpenCV `VideoCapture` decoder, the evaluation-only uniform layout scaler, the positive/negative frame classifiers, the aggregate summaries, the `RecognitionConsensusTracker` replay, the local contact-sheet writer and the benchmark entry point. Evaluation only: no production package reads the recording annotations and the private recordings never leave `local-data/`.
 
 OpenCV `Mat` results from capture and normalization are owned by their callers and must be closed. `FingerprintSolver` closes the normalized image; the input frame remains the caller's responsibility.
 
@@ -91,6 +92,38 @@ The manual Windows smoke test for capture itself is `capture.CaptureProbe`:
 
 It lists monitors, prints every returned capture variant and the selected one, and saves `target/stage5-capture-probe.png` (local debug output, never committed and never uploaded).
 
+## Recording benchmark (Stage 6A/6B)
+
+Real gameplay round annotations and a frozen-pipeline baseline over two private local recordings are
+documented in [docs/recording-benchmark.md](docs/recording-benchmark.md). Stage 6A/6B measures; it
+does not tune.
+
+- Committed: `fixtures/gameplay/recordings/stage6-sources.csv` (generic source metadata and
+  SHA-256), `stage6-rounds.csv` (8 rounds, 4 hacks, human verified), `stage6-hack-windows.csv` and a
+  README with provenance.
+- Private and ignored: the recordings live in `local-data/stage6/` and are never committed, copied
+  into fixtures, uploaded or attached to a pull request. No full gameplay frame is committed either;
+  every preview the benchmark generates stays under `target/`.
+- Measured baseline (unchanged production pipeline, `RecognitionPolicy.defaultPolicy()`): 1440p
+  1491 of 1499 correct, 7 uncertain, 1 wrong; 1080p (evaluation-only 0.75 geometry) 2188 of 2255
+  correct, 32 uncertain, 35 wrong; zero false positives on 1331 sampled and 7989 exhaustive
+  strict-negative gameplay frames; all eight rounds reach a stable correct answer; every one of the
+  36 wrong frames is a round-start boundary frame that carries the previous round's answer.
+- 1920x1080 uses an evaluation-only derived geometry (uniform 0.75 edge scaling of the production
+  layout, native frames, no resize, no ROI tuning). `LiveRecognitionMain` still supports 2560x1440
+  only.
+- FP_2 has no real-game round in these recordings, so no FP_2 claim is made.
+
+Run it locally (the private recordings must exist first):
+
+```powershell
+.\mvnw.cmd -B -ntp compile exec:java "-Dexec.mainClass=io.github.bohdankordon.casinofingerprint.evaluation.recording.RecordingBenchmarkMain" "-Dexec.args=--exhaustive-negative"
+```
+
+It writes the per-frame results, the round, resolution and consensus summaries, the benchmark report,
+the derived 1080p manifest and the review contact sheets below `target/` (build output, never
+committed).
+
 ## Roadmap
 
 1. Stage 0 - foundation
@@ -100,4 +133,6 @@ It lists monitors, prints every returned capture variant and the selected one, a
 5. Stage 4 - constrained solver and confidence model (complete: conservative recognition decision, no automation)
 6. Stage 5 - live screen capture and recognition-only runtime (complete: AWT backend, HiDPI-safe selection, full-frame pipeline, three-frame consensus, CLI; no automation)
 7. Stage 6 - robustness evaluation and tuning
+   - Stage 6A/6B - real gameplay recording dataset and frozen baseline benchmark (complete: annotations, private recording ingestion, positive and negative frame benchmarks, consensus replay and an evaluation-only 1080p geometry; no algorithm or policy change)
+   - Stage 6C/6D - any tuning based on the measured baseline (NOT started)
 8. Possible later stage - optional input automation

@@ -1,0 +1,5 @@
+source_id,hack_id,start_seconds,end_seconds,notes
+recording_1440p,1,16.000,50.000,user-provided approximate hack window; used only to define strict negative gameplay
+recording_1440p,2,119.000,140.000,user-provided approximate hack window; used only to define strict negative gameplay
+recording_1080p,1,40.000,84.000,user-provided approximate hack window; used only to define strict negative gameplay
+recording_1080p,2,134.000,170.000,user-provided approximate hack window; used only to define strict negative gameplay
