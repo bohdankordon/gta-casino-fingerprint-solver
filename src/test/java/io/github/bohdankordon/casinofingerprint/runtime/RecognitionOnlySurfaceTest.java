@@ -67,7 +67,11 @@ class RecognitionOnlySurfaceTest {
             LiveRecognitionState.class,
             LiveFrameOutcome.class,
             LiveRecognitionMain.class,
-            LiveRecognitionOptions.class);
+            LiveRecognitionOptions.class,
+            RecognitionIdentity.class,
+            RoundLifecycleTracker.class,
+            RoundLifecycleState.class,
+            RoundLifecycleStatus.class);
 
     private static final List<String> FORBIDDEN_TYPE_TOKENS = List.of(
             "input", "keyboard", "keyevent", "keycode", "hotkey", "keystroke", "mouse");
@@ -123,6 +127,40 @@ class RecognitionOnlySurfaceTest {
                 Arrays.stream(LiveRecognitionState.values()).map(Enum::name).toList(),
                 "Runtime states describe what was recognized; an input state would break this "
                         + "stage contract");
+    }
+
+    @Test
+    void lifecycleSourcesHaveNoTimersInputOrAutomation() throws java.io.IOException {
+        // Stage 6C.1B correctness is purely event/state based: a clock, a sleep or a
+        // duration must never become a lifecycle signal. This scans the four production
+        // lifecycle sources for the concrete timer, sleep and input APIs.
+        java.nio.file.Path runtime = java.nio.file.Path.of(System.getProperty("user.dir"))
+                .resolve("src/main/java/io/github/bohdankordon/casinofingerprint/runtime");
+        java.util.List<String> lifecycleSources = java.util.List.of(
+                "RecognitionIdentity.java",
+                "RoundLifecycleTracker.java",
+                "RoundLifecycleState.java",
+                "RoundLifecycleStatus.java");
+        java.util.List<String> forbiddenTokens = java.util.List.of(
+                "System.currentTimeMillis",
+                "System.nanoTime",
+                "Thread.sleep",
+                "java.time.Duration",
+                "java.awt.Robot",
+                "KeyEvent",
+                "MouseEvent",
+                "keyPress",
+                "keyRelease",
+                "mousePress",
+                "mouseRelease");
+        for (String source : lifecycleSources) {
+            String text = java.nio.file.Files.readString(runtime.resolve(source),
+                    java.nio.charset.StandardCharsets.UTF_8);
+            for (String token : forbiddenTokens) {
+                assertFalse(text.contains(token),
+                        source + " must not use " + token);
+            }
+        }
     }
 
     private static void assertAllowed(Class<?> owner, Class<?> candidate, String member) {

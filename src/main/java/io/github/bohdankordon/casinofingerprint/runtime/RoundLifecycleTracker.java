@@ -1,0 +1,230 @@
+package io.github.bohdankordon.casinofingerprint.runtime;
+
+import java.util.Objects;
+import java.util.Optional;
+
+/**
+ * Production round lifecycle tracker: answers {@code is this stable recognition a NEW round
+ * that downstream code may consume?}
+ *
+ * <p>Conceptual position in the pipeline:
+ *
+ * <pre>
+ * RecognitionDecision -&gt; RecognitionConsensusTracker -&gt; RoundLifecycleTracker
+ * </pre>
+ *
+ * <p>The tracker consumes the OUTPUT of {@link RecognitionConsensusTracker} via
+ * {@link #accept(LiveRecognitionStatus)} and never reimplements recognition consensus itself.
+ * Only {@code STABLE_RECOGNIZED} may create a lifecycle round; every other consensus state is
+ * never actionable and — critically — never clears lifecycle memory. {@code UNCERTAIN} is a
+ * refusal of the conservative policy, not a claim that the puzzle is absent, so treating it as
+ * a reset would re-enable the previous-round carryover bug measured in Stage 6C.1A.
+ *
+ * <p>Stable EPISODES, not stable frames: the consensus tracker reports {@code STABLE_RECOGNIZED}
+ * on every frame after the required streak is reached, but only a stable-episode ONSET (a
+ * stable identity that differs from the previously observed stable identity, or any stable
+ * identity after a non-stable observation) is a lifecycle event. A continued stable frame is
+ * silent.
+ *
+ * <p>State machine:
+ *
+ * <pre>
+ * WAITING_FOR_STABLE --stable onset(X)--&gt; ROUND_READY(X)
+ * ROUND_READY(P)     --stable onset(P)--&gt; ROUND_READY(P)   (pending re-stabilized, still ready)
+ * ROUND_READY(P)     --stable onset(Q!=P)--&gt; DESYNCHRONIZED (pending P kept as stale diagnostic)
+ * ROUND_READY(P)     --anything else--&gt; ROUND_READY(P)     (consume validity follows the
+ *                                                          latest observation, see below)
+ * ROUND_CONSUMED(C)  --stable onset(C)--&gt; ROUND_CONSUMED(C) (suppressed, never a new round)
+ * ROUND_CONSUMED(C)  --stable onset(Q!=C)--&gt; ROUND_READY(Q)
+ * DESYNCHRONIZED     --anything--&gt; DESYNCHRONIZED          (only reset() clears it)
+ * </pre>
+ *
+ * <p>Consumption contract ({@link #consumeReadyRound()}): valid only while the state is
+ * {@code ROUND_READY} AND the most recently accepted consensus observation is still
+ * {@code STABLE_RECOGNIZED} of exactly the ready identity. If the consensus has ceased to be
+ * stably the ready identity before the consume call — an {@code UNCERTAIN} frame, a candidate,
+ * a capture problem — the consume call is rejected instead of silently acknowledging a stale
+ * round. There is no time grace period. If the ready identity later becomes stable again while
+ * still pending, consuming it may succeed again. Consumption is lifecycle acknowledgement
+ * only: it never resets the consensus tracker, never clears the consumed identity, and never
+ * implies gameplay input or success.
+ *
+ * <p>Same-identity rule and its limitation: after an identity is consumed, that SAME identity
+ * can never become ready again, no matter how many {@code UNCERTAIN} frames, capture errors,
+ * unsupported frames or consensus resets sit between the two stable episodes. Two consecutive
+ * real rounds with the exact same answer identity therefore stay suppressed — a deliberate
+ * fail-closed limitation, because the recordings contain no example of that case and guessing
+ * would risk double-consuming one round. An independent transition witness (future work) is
+ * needed to lift it.
+ *
+ * <p>Only the LATEST consumed identity is remembered. A legitimate later round may reuse an
+ * identity consumed two rounds ago: after {@code A -&gt; consume, B -&gt; consume}, a stable
+ * {@code A} differs from the current consumed identity {@code B} and may become ready. No
+ * history set is kept.
+ *
+ * <p>{@link #reset()} is a session/external control primitive only. It is never called
+ * automatically, in particular never because the stream contains {@code UNCERTAIN},
+ * {@code CAPTURE_ERROR} or {@code UNSUPPORTED_FRAME}.
+ *
+ * <p>The tracker knows nothing about resolutions, hack ids, round numbers, timestamps or
+ * recordings, and its correctness never depends on a clock, a sleep or a duration: there is
+ * no timing constant anywhere in this class.
+ *
+ * <p>State is deterministic and single-threaded: one tracker belongs to one recognition stream.
+ */
+public final class RoundLifecycleTracker {
+    private RoundLifecycleState state = RoundLifecycleState.WAITING_FOR_STABLE;
+    private RecognitionIdentity readyIdentity;
+    private RecognitionIdentity consumedIdentity;
+
+    /** Latest accepted consensus observation, for the consume-validity rule. */
+    private boolean latestStable;
+    private RecognitionIdentity latestStableIdentity;
+
+    /** Previous accepted observation, for stable-episode onset detection. */
+    private boolean previousStable;
+    private RecognitionIdentity previousStableIdentity;
+
+    /** Current lifecycle state. */
+    public RoundLifecycleState state() {
+        return state;
+    }
+
+    /** Round waiting for downstream acknowledgement; empty unless {@code ROUND_READY}. */
+    public Optional<RecognitionIdentity> readyIdentity() {
+        return state == RoundLifecycleState.ROUND_READY
+                ? Optional.of(readyIdentity)
+                : Optional.empty();
+    }
+
+    /** Last acknowledged round identity; empty until the first consumption. */
+    public Optional<RecognitionIdentity> consumedIdentity() {
+        return Optional.ofNullable(consumedIdentity);
+    }
+
+    /**
+     * Feeds one consensus output into the lifecycle state machine.
+     *
+     * @param consensusStatus output of {@link RecognitionConsensusTracker} for one frame
+     * @return immutable snapshot of the lifecycle after this observation, including which
+     *        lifecycle event this observation produced, if any
+     */
+    public RoundLifecycleStatus accept(LiveRecognitionStatus consensusStatus) {
+        Objects.requireNonNull(consensusStatus, "consensusStatus");
+        boolean stable = consensusStatus.state() == LiveRecognitionState.STABLE_RECOGNIZED;
+        RecognitionIdentity current = stable ? identityOf(consensusStatus) : null;
+        boolean onset = stable && !(previousStable && current.equals(previousStableIdentity));
+
+        boolean newRoundReady = false;
+        boolean consumedIdentityRepeated = false;
+        boolean desynchronizedNow = false;
+
+        switch (state) {
+            case WAITING_FOR_STABLE -> {
+                if (onset) {
+                    state = RoundLifecycleState.ROUND_READY;
+                    readyIdentity = current;
+                    newRoundReady = true;
+                }
+            }
+            case ROUND_READY -> {
+                if (onset) {
+                    if (current.equals(readyIdentity)) {
+                        // The still-pending round re-stabilized after an interruption:
+                        // still ready, and consumable again (see consumeReadyRound).
+                    } else {
+                        // A different stable answer appeared while the previous round was
+                        // never consumed: the consumer contract has fallen behind the game.
+                        // Never silently replace the pending round.
+                        state = RoundLifecycleState.DESYNCHRONIZED;
+                        desynchronizedNow = true;
+                    }
+                }
+            }
+            case ROUND_CONSUMED -> {
+                if (onset) {
+                    if (current.equals(consumedIdentity)) {
+                        consumedIdentityRepeated = true;
+                    } else {
+                        state = RoundLifecycleState.ROUND_READY;
+                        readyIdentity = current;
+                        newRoundReady = true;
+                    }
+                }
+            }
+            case DESYNCHRONIZED -> {
+                // Fail closed: no observation recovers the tracker, only reset() does.
+            }
+        }
+
+        previousStable = stable;
+        previousStableIdentity = current;
+        latestStable = stable;
+        latestStableIdentity = current;
+
+        return new RoundLifecycleStatus(state,
+                state == RoundLifecycleState.ROUND_READY
+                        || state == RoundLifecycleState.DESYNCHRONIZED ? readyIdentity : null,
+                consumedIdentity, current, newRoundReady, consumedIdentityRepeated,
+                desynchronizedNow);
+    }
+
+    /**
+     * Acknowledges ownership of the ready round identity.
+     *
+     * <p>This is lifecycle acknowledgement only — not gameplay input, not gameplay success.
+     * It transitions {@code ROUND_READY} to {@code ROUND_CONSUMED} and records exactly the
+     * ready identity, which stays remembered until a different stable identity is observed
+     * or the tracker is reset.
+     *
+     * @return exactly the canonical ready identity
+     * @throws IllegalStateException when the state is not {@code ROUND_READY} (waiting,
+     *         already consumed, or desynchronized), or when the most recently accepted
+     *         consensus observation is no longer {@code STABLE_RECOGNIZED} of the ready
+     *         identity, i.e. consuming a stale round is rejected
+     */
+    public RecognitionIdentity consumeReadyRound() {
+        if (state != RoundLifecycleState.ROUND_READY) {
+            throw new IllegalStateException(
+                    "A round can only be consumed while ROUND_READY, not while " + state);
+        }
+        if (!latestStable || !readyIdentity.equals(latestStableIdentity)) {
+            throw new IllegalStateException(
+                    "The ready round " + readyIdentity.code()
+                            + " is stale: the latest consensus observation is no longer stably"
+                            + " that identity, so it must not be acknowledged");
+        }
+        RecognitionIdentity consumed = readyIdentity;
+        readyIdentity = null;
+        consumedIdentity = consumed;
+        state = RoundLifecycleState.ROUND_CONSUMED;
+        return consumed;
+    }
+
+    /**
+     * Explicit full lifecycle reset: clears the ready identity, the consumed identity, the
+     * desynchronization and the stable-episode memory, returning to
+     * {@code WAITING_FOR_STABLE}.
+     *
+     * <p>Session/external control only. The tracker never calls this itself, and no
+     * observation ({@code UNCERTAIN}, capture problems, consensus resets) triggers it.
+     */
+    public void reset() {
+        state = RoundLifecycleState.WAITING_FOR_STABLE;
+        readyIdentity = null;
+        consumedIdentity = null;
+        latestStable = false;
+        latestStableIdentity = null;
+        previousStable = false;
+        previousStableIdentity = null;
+    }
+
+    private static RecognitionIdentity identityOf(LiveRecognitionStatus status) {
+        if (status.fingerprint().isEmpty()) {
+            throw new IllegalStateException(
+                    "A STABLE_RECOGNIZED status must carry a fingerprint");
+        }
+        return RecognitionIdentity.of(status.fingerprint().orElseThrow(),
+                status.selectedCandidates());
+    }
+}
