@@ -34,10 +34,19 @@ import java.util.Optional;
  * ROUND_READY(P)     --stable onset(Q!=P)--&gt; DESYNCHRONIZED (pending P kept as stale diagnostic)
  * ROUND_READY(P)     --anything else--&gt; ROUND_READY(P)     (consume validity follows the
  *                                                          latest observation, see below)
- * ROUND_CONSUMED(C)  --stable onset(C)--&gt; ROUND_CONSUMED(C) (suppressed, never a new round)
- * ROUND_CONSUMED(C)  --stable onset(Q!=C)--&gt; ROUND_READY(Q)
- * DESYNCHRONIZED     --anything--&gt; DESYNCHRONIZED          (only reset() clears it)
+* ROUND_CONSUMED(C)  --stable onset(C)--&gt; ROUND_CONSUMED(C) (suppressed, never a new round)
+* ROUND_CONSUMED(C)  --stable onset(Q!=C)--&gt; ROUND_READY(Q)
+* DESYNCHRONIZED     --anything--&gt; DESYNCHRONIZED          (only reset() clears it)
+* </pre>
+ *
+ * <p>Witnessed addition (see the evidence overload, normally reached through
+ * {@link RoundLifecycleWitnessCoordinator}):
+ *
+ * <pre>
+ * ROUND_CONSUMED(C)  --STABLE C + confirmed witness--&gt; ROUND_READY(C)
  * </pre>
+ *
+ * with no episode-onset requirement: a continued stable frame suffices.
  *
  * <p>Consumption contract ({@link #consumeReadyRound()}): valid only while the state is
  * {@code ROUND_READY} AND the most recently accepted consensus observation is still
@@ -49,13 +58,20 @@ import java.util.Optional;
  * only: it never resets the consensus tracker, never clears the consumed identity, and never
  * implies gameplay input or success.
  *
- * <p>Same-identity rule and its limitation: after an identity is consumed, that SAME identity
- * can never become ready again, no matter how many {@code UNCERTAIN} frames, capture errors,
- * unsupported frames or consensus resets sit between the two stable episodes. Two consecutive
- * real rounds with the exact same answer identity therefore stay suppressed — a deliberate
- * fail-closed limitation, because the recordings contain no example of that case and guessing
- * would risk double-consuming one round. An independent transition witness (future work) is
- * needed to lift it.
+ * <p>Same-identity rule and its witnessed exception: after an identity is consumed, that SAME
+ * identity stays suppressed fail-closed — unless an independent structural content transition is
+ * confirmed at the same time as {@code STABLE_RECOGNIZED} of that same identity. The witness is
+ * strictly additive: it may only permit a repeated consumed identity to become a new round, and
+ * it can never create a round on its own. Any other combination (non-stable consensus, waiting,
+ * pending or desynchronized lifecycle) ignores the witness. A different stable identity becomes
+ * the next round without any witness evidence.
+ *
+ * <p>A witnessed same-identity transition needs no new consensus episode onset. Consensus
+ * compares answer identity, not puzzle pixels, so a real {@code A -> A} transition can look like
+ * {@code STABLE A, STABLE A, [visual content changes], STABLE A, STABLE A}. While
+ * {@code ROUND_CONSUMED}, a current {@code STABLE} identity equal to the consumed identity plus
+ * confirmed witness evidence is therefore sufficient to segment a new lifecycle round. This stays
+ * safe only because {@code STABLE} consensus is required simultaneously.
  *
  * <p>Only the LATEST consumed identity is remembered. A legitimate later round may reuse an
  * identity consumed two rounds ago: after {@code A -&gt; consume, B -&gt; consume}, a stable
@@ -105,19 +121,60 @@ public final class RoundLifecycleTracker {
     /**
      * Feeds one consensus output into the lifecycle state machine.
      *
+     * <p>Equivalent to {@link #accept(LiveRecognitionStatus, PuzzleContentTransitionEvidence)}
+     * with no independent witness: the fail-closed same-identity suppression always applies.
+     *
      * @param consensusStatus output of {@link RecognitionConsensusTracker} for one frame
      * @return immutable snapshot of the lifecycle after this observation, including which
      *        lifecycle event this observation produced, if any
      */
     public RoundLifecycleStatus accept(LiveRecognitionStatus consensusStatus) {
+        return accept(consensusStatus, PuzzleContentTransitionEvidence.absent());
+    }
+
+    /**
+     * Feeds one consensus output plus independent structural content-transition evidence into the
+     * lifecycle state machine.
+     *
+     * <p>The witness is strictly additive. The only permitted witnessed path is: the tracker is
+     * currently {@code ROUND_CONSUMED}, the current consensus status is
+     * {@code STABLE_RECOGNIZED}, the current stable identity equals the consumed identity, and
+     * the independent witness confirms a structural transition — then the same identity becomes
+     * {@code ROUND_READY} with {@code transitionWitnessUsed} set. Every other combination ignores
+     * the witness: non-stable consensus, a waiting/pending/desynchronized tracker, or a different
+     * stable identity (which follows the existing identity-change path with no witness needed).
+    * In particular a witnessed same-identity transition needs no new consensus episode onset:
+    * a continued {@code STABLE} frame of the consumed identity plus confirmed evidence is
+    * sufficient.
+    *
+     * <p>Lower-level runtime primitive: production orchestration should use
+     * {@link RoundLifecycleWitnessCoordinator}, which binds the consensus status and the
+     * witness evidence to the same observed frame. This overload stays public because the
+     * evaluation-only counterfactual harness pairs production evidence with a substituted
+     * identity below the coordinator boundary.
+     *
+    * @param consensusStatus output of {@link RecognitionConsensusTracker} for one frame
+     * @param transitionEvidence plain-data structural witness outcome for the same frame; never
+     *        {@code null} (use {@link PuzzleContentTransitionEvidence#absent()} for no witness)
+     * @return immutable snapshot of the lifecycle after this observation
+     */
+    public RoundLifecycleStatus accept(LiveRecognitionStatus consensusStatus,
+            PuzzleContentTransitionEvidence transitionEvidence) {
         Objects.requireNonNull(consensusStatus, "consensusStatus");
+        Objects.requireNonNull(transitionEvidence, "transitionEvidence");
         boolean stable = consensusStatus.state() == LiveRecognitionState.STABLE_RECOGNIZED;
         RecognitionIdentity current = stable ? identityOf(consensusStatus) : null;
         boolean onset = stable && !(previousStable && current.equals(previousStableIdentity));
+        // The witness is consulted only together with STABLE consensus while ROUND_CONSUMED and
+        // only for the repeated consumed identity. Every other path ignores it.
+        boolean witnessConfirmed = stable && state == RoundLifecycleState.ROUND_CONSUMED
+                && consumedIdentity != null && current.equals(consumedIdentity)
+                && transitionEvidence.transitionConfirmed();
 
         boolean newRoundReady = false;
         boolean consumedIdentityRepeated = false;
         boolean desynchronizedNow = false;
+        boolean transitionWitnessUsed = false;
 
         switch (state) {
             case WAITING_FOR_STABLE -> {
@@ -142,14 +199,23 @@ public final class RoundLifecycleTracker {
                 }
             }
             case ROUND_CONSUMED -> {
-                if (onset) {
-                    if (current.equals(consumedIdentity)) {
-                        consumedIdentityRepeated = true;
-                    } else {
+                if (stable && current.equals(consumedIdentity)) {
+                    if (witnessConfirmed) {
+                        // Strictly additive exception: the repeated consumed identity becomes a
+                        // new round because independent structural content change was confirmed
+                        // at the same time as STABLE consensus of that same identity. Works on
+                        // an onset and on a continued STABLE frame alike.
                         state = RoundLifecycleState.ROUND_READY;
                         readyIdentity = current;
                         newRoundReady = true;
+                        transitionWitnessUsed = true;
+                    } else if (onset) {
+                        consumedIdentityRepeated = true;
                     }
+                } else if (onset) {
+                    state = RoundLifecycleState.ROUND_READY;
+                    readyIdentity = current;
+                    newRoundReady = true;
                 }
             }
             case DESYNCHRONIZED -> {
@@ -166,7 +232,7 @@ public final class RoundLifecycleTracker {
                 state == RoundLifecycleState.ROUND_READY
                         || state == RoundLifecycleState.DESYNCHRONIZED ? readyIdentity : null,
                 consumedIdentity, current, newRoundReady, consumedIdentityRepeated,
-                desynchronizedNow);
+                desynchronizedNow, transitionWitnessUsed);
     }
 
     /**

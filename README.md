@@ -211,6 +211,19 @@ It writes `target/stage6c1c-witness-frames.csv`, `target/stage6c1c-witness-trans
 `target/stage6c1c-witness-same-target.csv`, `target/stage6c1c-witness-report.txt` and the local
 review sheets under `target/stage6c1c-witness-contact-sheets/` (all build output, never committed).
 
+## Production transition witness (Stage 6C.1D)
+
+Stage 6C.1D promotes one narrowly scoped structural rule from the 6C.1C measurement into
+production: at cut 0.50 at least 6 of the 9 normalized regions (target plus eight candidates)
+must change, compared with the unmodified StructuralSimilarityScorer and production radii.
+The witness is identity-independent and armed only after consumption; the coordinator pairs
+lifecycle consumption with baseline re-arm, and the lifecycle gains exactly one additive path
+where a repeated consumed identity plus STABLE consensus plus confirmed content change becomes
+a witnessed ROUND_READY. Documented in docs/production-transition-witness.md. No gameplay input,
+no matcher or policy change, no production 1080p support. Normal real-recording replay stays at
+8 READY and 8 consumed with no extra witness events; the counterfactual A to A production replay
+yields 8 READY, 8 consumed and 4 witnessed repeated-identity READY events.
+
 ## Roadmap
 
 1. Stage 0 - foundation
@@ -224,5 +237,9 @@ review sheets under `target/stage6c1c-witness-contact-sheets/` (all build output
    - Stage 6C.1A - full-rate round-transition characterization (complete: per-frame temporal trace, transition summaries, reset experiment, offline guard simulation and a design recommendation; no lifecycle state machine yet)
    - Stage 6C.1B - the production RoundLifecycleTracker, fail-closed and event based (complete: stable-episode onsets, explicit consumption, same-identity suppression and fail-closed desynchronization; the full-rate replay over both recordings yields 8 ready and 8 consumed rounds with zero duplicate carryover, zero unexplained answers and zero desynchronizations; no input and no timing constant)
    - Stage 6C.1C - independent visual round-transition witness characterization (complete: W0..W4 witness families measured on 4442 full-rate frames against one frozen consumed-round baseline per round, the same-round / transition / entry / exit populations, a 104 rule threshold sweep with worst-case separation margins, the counterfactual same-identity replay and the exact-visual-repeat control; measurement only - no production witness, no lifecycle change, no input and no tuning)
+   - Stage 6C.1D - production structural transition witness (complete: identity-independent 0.50
+     and 6-of-9 rule, owned witness baseline, additive lifecycle path, coordinator consume plus
+     re-arm, observation ownership path, normal and counterfactual A to A production replays;
+     no input and no tuning)
    - Stage 6C/6D - any tuning based on the measured baseline (NOT started)
 8. Possible later stage - optional input automation

@@ -29,8 +29,12 @@ import org.bytedeco.opencv.opencv_core.Mat;
  * the runtime that loaded it once for the session, so the pipeline never closes it.
  *
  * <p>Ownership per call: the caller keeps ownership of the full frame, which is never modified
- * and never closed here. The extracted and normalized intermediates are closed by the pipeline
- * itself, including on failure, so one call leaks no native memory.
+ * and never closed here. {@link #recognize(Mat)} closes every extracted and normalized
+ * intermediate itself, including on failure, so one call leaks no native memory.
+ * {@link #observe(Mat)} instead transfers the normalized puzzle into an owned
+ * {@link FrameRecognitionObservation} that the caller must close; the decision inside stays valid
+ * after close while the normalized puzzle does not. Both paths run the same single extraction,
+ * normalization and recognition sequence with no second normalization pass.
  */
 public final class FrameRecognitionPipeline {
     private final GameplayLayout layout;
@@ -68,6 +72,29 @@ public final class FrameRecognitionPipeline {
      * @throws IllegalArgumentException when the frame is empty
      */
     public FrameRecognitionResult recognize(Mat fullFrame) {
+        try (FrameRecognitionObservation observation = observe(fullFrame)) {
+            return new FrameRecognitionResult(observation.decision(),
+                    observation.extractionNanos(), observation.recognitionNanos());
+        }
+    }
+
+    /**
+     * Recognizes one full frame while keeping the normalized puzzle of the SAME frame.
+     *
+     * <p>The returned observation owns its normalized puzzle (target plus eight candidates) and
+     * must be closed by the caller; closing it releases the normalized puzzle while the decision
+     * stays valid. The input frame is borrowed, never modified and never closed here. Exception
+     * paths close every extracted and normalized resource already created, so a failure leaks no
+     * native memory.
+     *
+     * @param fullFrame captured screen matching the layout dimensions exactly; caller-owned and
+     *        not modified
+     * @return owned observation of the same frame that must be closed by the caller
+     * @throws UnsupportedFrameSizeException when the frame is not the supported physical size;
+     *         the frame is rejected before ROI extraction and before any normalization
+     * @throws IllegalArgumentException when the frame is empty
+     */
+    public FrameRecognitionObservation observe(Mat fullFrame) {
         Objects.requireNonNull(fullFrame, "fullFrame");
         if (fullFrame.empty()) {
             throw new IllegalArgumentException("fullFrame must not be empty");
@@ -77,12 +104,23 @@ public final class FrameRecognitionPipeline {
                     fullFrame.cols(), fullFrame.rows());
         }
         long started = System.nanoTime();
-        try (ExtractedPuzzleFrame raw = extractor.extract(fullFrame);
-                NormalizedPuzzleFrame puzzle = NormalizedPuzzleFrame.normalize(raw, normalizer)) {
-            long extracted = System.nanoTime();
-            RecognitionDecision decision = engine.recognize(puzzle, library);
-            long recognized = System.nanoTime();
-            return new FrameRecognitionResult(decision, extracted - started, recognized - extracted);
+        ExtractedPuzzleFrame raw = extractor.extract(fullFrame);
+        NormalizedPuzzleFrame puzzle;
+        try {
+            puzzle = NormalizedPuzzleFrame.normalize(raw, normalizer);
+        } finally {
+            raw.close();
         }
+        long extracted = System.nanoTime();
+        RecognitionDecision decision;
+        try {
+            decision = engine.recognize(puzzle, library);
+        } catch (RuntimeException e) {
+            puzzle.close();
+            throw e;
+        }
+        long recognized = System.nanoTime();
+        return new FrameRecognitionObservation(decision, puzzle, extracted - started,
+                recognized - extracted);
     }
 }

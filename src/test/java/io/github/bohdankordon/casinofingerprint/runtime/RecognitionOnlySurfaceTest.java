@@ -71,7 +71,11 @@ class RecognitionOnlySurfaceTest {
             RecognitionIdentity.class,
             RoundLifecycleTracker.class,
             RoundLifecycleState.class,
-            RoundLifecycleStatus.class);
+            RoundLifecycleStatus.class,
+            FrameRecognitionObservation.class,
+            PuzzleContentTransitionEvidence.class,
+            PuzzleContentTransitionWitness.class,
+            RoundLifecycleWitnessCoordinator.class);
 
     private static final List<String> FORBIDDEN_TYPE_TOKENS = List.of(
             "input", "keyboard", "keyevent", "keycode", "hotkey", "keystroke", "mouse");
@@ -131,16 +135,21 @@ class RecognitionOnlySurfaceTest {
 
     @Test
     void lifecycleSourcesHaveNoTimersInputOrAutomation() throws java.io.IOException {
-        // Stage 6C.1B correctness is purely event/state based: a clock, a sleep or a
-        // duration must never become a lifecycle signal. This scans the four production
-        // lifecycle sources for the concrete timer, sleep and input APIs.
+        // Stage 6C.1B/6C.1D correctness is purely event/state based: a clock, a sleep or a
+        // duration must never become a lifecycle or witness signal. Pipeline phase timing keeps
+        // using the existing System.nanoTime diagnostics, which must not be confused with
+        // witness correctness, so FrameRecognitionPipeline/Result/Observation are excluded here
+        // and covered by the witness-correctness test below instead.
         java.nio.file.Path runtime = java.nio.file.Path.of(System.getProperty("user.dir"))
                 .resolve("src/main/java/io/github/bohdankordon/casinofingerprint/runtime");
         java.util.List<String> lifecycleSources = java.util.List.of(
                 "RecognitionIdentity.java",
                 "RoundLifecycleTracker.java",
                 "RoundLifecycleState.java",
-                "RoundLifecycleStatus.java");
+                "RoundLifecycleStatus.java",
+                "PuzzleContentTransitionEvidence.java",
+                "PuzzleContentTransitionWitness.java",
+                "RoundLifecycleWitnessCoordinator.java");
         java.util.List<String> forbiddenTokens = java.util.List.of(
                 "System.currentTimeMillis",
                 "System.nanoTime",
@@ -160,6 +169,54 @@ class RecognitionOnlySurfaceTest {
                 assertFalse(text.contains(token),
                         source + " must not use " + token);
             }
+        }
+    }
+
+    @Test
+    void witnessCorrectnessNeverDependsOnATimer() throws java.io.IOException {
+        // The witness decision is a pure structural comparison: no clock, sleep, duration or
+        // input may appear in the witness, the evidence or the coordinator. Pipeline phase
+        // timing (System.nanoTime diagnostics in FrameRecognitionPipeline and
+        // LiveRecognitionRuntime) is explicitly out of scope here.
+        java.nio.file.Path runtime = java.nio.file.Path.of(System.getProperty("user.dir"))
+                .resolve("src/main/java/io/github/bohdankordon/casinofingerprint/runtime");
+        for (String source : java.util.List.of("PuzzleContentTransitionWitness.java",
+                "PuzzleContentTransitionEvidence.java",
+                "RoundLifecycleWitnessCoordinator.java",
+                "FrameRecognitionObservation.java")) {
+            String text = java.nio.file.Files.readString(runtime.resolve(source),
+                    java.nio.charset.StandardCharsets.UTF_8);
+            for (String token : java.util.List.of("currentTimeMillis", "nanoTime",
+                    "Thread.sleep", "Duration", "Robot", "KeyEvent", "MouseEvent", "keyPress",
+                    "keyRelease", "mousePress", "mouseRelease")) {
+                assertFalse(text.contains(token), source + " must not use " + token);
+            }
+        }
+    }
+
+    @Test
+    void witnessImplementationIsIdentityIndependent() throws java.io.IOException {
+        // The visual witness itself must not read identity, decision, consensus or lifecycle
+        // state: its only job is comparing normalized structural content with a frozen baseline.
+        java.nio.file.Path runtime = java.nio.file.Path.of(System.getProperty("user.dir"))
+                .resolve("src/main/java/io/github/bohdankordon/casinofingerprint/runtime");
+        String witness = java.nio.file.Files.readString(
+                runtime.resolve("PuzzleContentTransitionWitness.java"),
+                java.nio.charset.StandardCharsets.UTF_8);
+        for (String forbidden : java.util.List.of("FingerprintId", "RecognitionIdentity",
+                "selectedCandidate", "selectedCandidates", "RecognitionDecision",
+                "LiveRecognitionStatus", "LiveRecognitionState", "RecognitionConsensusTracker",
+                "RoundLifecycleTracker", "RoundLifecycleStatus", "RoundLifecycleState")) {
+            assertFalse(witness.contains(forbidden),
+                    "PuzzleContentTransitionWitness must not reference " + forbidden);
+        }
+        String evidence = java.nio.file.Files.readString(
+                runtime.resolve("PuzzleContentTransitionEvidence.java"),
+                java.nio.charset.StandardCharsets.UTF_8);
+        for (String forbidden : java.util.List.of("FingerprintId", "RecognitionIdentity",
+                "RecognitionDecision", "LiveRecognitionStatus", "RoundLifecycleTracker")) {
+            assertFalse(evidence.contains(forbidden),
+                    "PuzzleContentTransitionEvidence must not reference " + forbidden);
         }
     }
 
