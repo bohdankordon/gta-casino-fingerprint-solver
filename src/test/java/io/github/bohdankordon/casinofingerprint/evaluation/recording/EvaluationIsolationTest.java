@@ -90,7 +90,13 @@ class EvaluationIsolationTest {
                 io.github.bohdankordon.casinofingerprint.evaluation.recording.transition
                         .RoundTransitionAnalysis.REPORT_REL,
                 io.github.bohdankordon.casinofingerprint.evaluation.recording.transition
-                        .RoundTransitionAnalysis.CONTACT_SHEET_DIRECTORY_REL)) {
+                        .RoundTransitionAnalysis.CONTACT_SHEET_DIRECTORY_REL,
+                io.github.bohdankordon.casinofingerprint.evaluation.recording.transition
+                        .RoundLifecycleReplay.EVENTS_CSV_REL,
+                io.github.bohdankordon.casinofingerprint.evaluation.recording.transition
+                        .RoundLifecycleReplay.SUMMARY_CSV_REL,
+                io.github.bohdankordon.casinofingerprint.evaluation.recording.transition
+                        .RoundLifecycleReplay.REPORT_REL)) {
             assertTrue(artifact.startsWith("target/"),
                     artifact + " must be build output, never a committed artifact");
         }
