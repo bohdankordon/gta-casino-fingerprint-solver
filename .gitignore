@@ -1,6 +1,9 @@
 # Maven
 target/
 
+# Private local Stage 6 gameplay recordings (never committed, never uploaded)
+local-data/
+
 # Java
 *.class
 out/
