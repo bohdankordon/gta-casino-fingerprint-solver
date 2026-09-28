@@ -54,6 +54,21 @@ Failure order: clone first, validate consumable, consume lifecycle, install prep
 close previous. If preparation fails the lifecycle stays unconsumed. If consumption fails the
 prepared baseline is closed and the old baseline stays intact.
 
+Consumption is frame-bound. The coordinator accept method takes the owned observation of the
+same frame that produced the consensus decision, and remembers that observation as the
+consumable one only while the returned snapshot shows ROUND_READY whose ready identity is still
+the current stable identity. consumeReadyRound accepts only that remembered observation and
+prepares the replacement baseline from its exact content. An older observation, a different
+observation, a closed observation, or consumption after the latest consensus stopped being
+stably the ready identity is rejected, the lifecycle stays unconsumed, and the existing baseline
+stays intact. When the pending identity later re-stabilizes, the new current observation becomes
+the consumable one; desynchronization, reset and close leave no consumable observation. The
+coordinator never closes observations and never retains ownership of them; the caller owns and
+closes each per-frame observation. The intended call order per frame is observe, consensus
+accept, coordinator accept, and consumption with the SAME observation when it reports a new
+ready round. The old puzzle-based coordinator overloads were removed so no alternate public path
+can bypass the same-frame invariant.
+
 ## Lifecycle semantics
 
 The old accept method behaves exactly as before (absent evidence). The additive overload adds
@@ -66,6 +81,12 @@ A witness alone can never create a round.
 STABLE consensus stays mandatory because the witness measures content change, not validity.
 An A to A transition may have no new consensus onset because consensus compares identity, not
 pixels, so continued STABLE plus confirmed evidence is sufficient while ROUND_CONSUMED.
+
+Evidence is self-consistent by construction. The evidence constructor requires the changed
+count to equal the number of similarities strictly below the production cut and the
+confirmation flag to equal whether that count reaches the production required count, so a
+malformed instance cannot bypass the structural rule through the public lifecycle overload.
+The canonical factory derives both from similarities directly. This does not change the rule.
 
 ## Pipeline ownership
 

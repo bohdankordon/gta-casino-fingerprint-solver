@@ -646,7 +646,7 @@ public final class ProductionWitnessReplay {
                 List<Event> events) {
             LiveRecognitionStatus status = consensus.accept(observation.decision());
             RoundLifecycleStatus update =
-                    coordinator.accept(status, observation.puzzle());
+                    coordinator.accept(status, observation);
             acceptUpdate(replayScope, sourceId, resolution, hackId, frameIndex, timestampMs,
                     status, observation, update, events);
         }
@@ -665,7 +665,7 @@ public final class ProductionWitnessReplay {
                     substitute(decision, roundOne, roundTwo);
             LiveRecognitionStatus status = consensus.accept(substituted);
             RoundLifecycleStatus update =
-                    coordinator.accept(status, observation.puzzle());
+                    coordinator.accept(status, observation);
             acceptUpdate(replayScope, sourceId, resolution, hackId, frameIndex, timestampMs,
                     status, observation, update, events);
         }
@@ -681,14 +681,14 @@ public final class ProductionWitnessReplay {
             String consumedImmediately = "";
             String consumedCode = code(update.consumedIdentity());
             PuzzleContentTransitionEvidence evidence =
-                    coordinator.evidenceFor(observation.puzzle());
+                    coordinator.evidenceFor(observation);
             if (update.newRoundReady()) {
                 RecognitionIdentity ready = update.ready()
                         .orElseThrow(() -> new IllegalStateException(
                                 "A NEW_ROUND_READY update must expose a ready identity"));
                 try {
                     RecognitionIdentity consumed =
-                            coordinator.consumeReadyRound(observation.puzzle());
+                            coordinator.consumeReadyRound(observation);
                     if (!consumed.equals(ready)) {
                         throw new IllegalStateException(
                                 "Consumed " + consumed.code() + " but ready was "

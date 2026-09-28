@@ -222,6 +222,56 @@ class PuzzleContentTransitionWitnessTest {
     }
 
     @Test
+    void confirmedEvidenceWithTooFewChangedRegionsIsRejected() {
+        assertThrows(IllegalArgumentException.class,
+                () -> new PuzzleContentTransitionEvidence(true, 5, 0.10,
+                        List.of(0.10, 0.10, 0.10, 0.10, 0.10, 0.90, 0.90, 0.90)),
+                "Confirmed evidence needs at least 6 structurally changed regions");
+        assertThrows(IllegalArgumentException.class,
+                () -> new PuzzleContentTransitionEvidence(true, 0, 1.0,
+                        List.of(1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0)),
+                "Confirmed evidence with unchanged similarities must fail");
+    }
+
+    @Test
+    void unconfirmedEvidenceWithEnoughChangedRegionsIsRejected() {
+        assertThrows(IllegalArgumentException.class,
+                () -> new PuzzleContentTransitionEvidence(false, 9, 0.10,
+                        List.of(0.10, 0.10, 0.10, 0.10, 0.10, 0.10, 0.10, 0.10)),
+                "Six or more changed regions must confirm");
+        assertThrows(IllegalArgumentException.class,
+                () -> new PuzzleContentTransitionEvidence(false, 6, 0.10,
+                        List.of(0.10, 0.10, 0.10, 0.10, 0.10, 0.90, 0.90, 0.90)),
+                "Exactly 6 changed regions must confirm");
+    }
+
+    @Test
+    void changedCountInconsistentWithSimilaritiesIsRejected() {
+        assertThrows(IllegalArgumentException.class,
+                () -> new PuzzleContentTransitionEvidence(false, 0, 0.10,
+                        List.of(0.90, 0.90, 0.90, 0.90, 0.90, 0.90, 0.90, 0.90)),
+                "The changed target alone is one changed region, not zero");
+        assertThrows(IllegalArgumentException.class,
+                () -> new PuzzleContentTransitionEvidence(false, 3, 0.90,
+                        List.of(0.10, 0.10, 0.90, 0.90, 0.90, 0.90, 0.90, 0.90)),
+                "Two changed candidates are two changed regions, not three");
+    }
+
+    @Test
+    void canonicalFactoryDerivesCountAndFlag() {
+        PuzzleContentTransitionEvidence confirmed = PuzzleContentTransitionEvidence.of(0.10,
+                List.of(0.10, 0.10, 0.10, 0.10, 0.10, 0.90, 0.90, 0.90));
+        assertTrue(confirmed.transitionConfirmed());
+        assertEquals(6, confirmed.changedRegionCount());
+        PuzzleContentTransitionEvidence unconfirmed = PuzzleContentTransitionEvidence.of(0.90,
+                List.of(0.10, 0.10, 0.10, 0.10, 0.10, 0.90, 0.90, 0.90));
+        assertFalse(unconfirmed.transitionConfirmed());
+        assertEquals(5, unconfirmed.changedRegionCount());
+        assertFalse(PuzzleContentTransitionEvidence.absent().transitionConfirmed());
+        assertEquals(0, PuzzleContentTransitionEvidence.absent().changedRegionCount());
+    }
+
+    @Test
     void nullInputsAreRejected() {
         try (PuzzleContentTransitionWitness witness = new PuzzleContentTransitionWitness()) {
             assertThrows(NullPointerException.class, () -> witness.arm(null));

@@ -5,25 +5,26 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import io.github.bohdankordon.casinofingerprint.matching.NormalizedPuzzleFrame;
 import io.github.bohdankordon.casinofingerprint.model.FingerprintId;
 import java.util.List;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
 /**
- * Integration contract of {@link RoundLifecycleWitnessCoordinator}: atomic consume plus baseline
+ * Integration contract of RoundLifecycleWitnessCoordinator: frame-bound consume plus baseline
  * re-arm, re-arm visibility, interruption survival and explicit reset.
  *
- * <p>Visual content is synthetic normalized noise (see
- * {@link PuzzleContentTransitionWitnessTest}); identities are synthetic Stage 5 decisions.
+ * <p>Visual content is synthetic normalized noise (see PuzzleContentTransitionWitnessTest);
+ * identities are synthetic Stage 5 decisions. Every coordinator interaction goes through owned
+ * FrameRecognitionObservation instances, mirroring the intended Stage 7 call order: observe,
+ * consensus, coordinator accept, and consumption with the SAME observation.
  */
 class RoundLifecycleWitnessCoordinatorTest {
     private static final List<Integer> A_SET = List.of(1, 4, 5, 6);
     private static final List<Integer> B_SET = List.of(2, 4, 6, 7);
     private static final long TARGET_X = 11L;
     private static final long BASE_X = 100L;
-    private static final long TARGET_Y = 999_001L;
+    private static final long TARGET_Y = 999001L;
 
     @BeforeAll
     static void loadNativeLibrary() {
@@ -34,7 +35,7 @@ class RoundLifecycleWitnessCoordinatorTest {
     void unarmedCoordinatorBehavesLikeTheWitnessFreeLifecycle() {
         try (RoundLifecycleWitnessCoordinator coordinator =
                 new RoundLifecycleWitnessCoordinator();
-                NormalizedPuzzleFrame frame = ProductionWitnessTestSupport.normalizedFrame(
+                FrameRecognitionObservation frame = ProductionWitnessTestSupport.observation(
                         TARGET_X, ProductionWitnessTestSupport.candidateSeeds(BASE_X))) {
             assertFalse(coordinator.isWitnessArmed());
             RoundLifecycleStatus onset =
@@ -49,7 +50,7 @@ class RoundLifecycleWitnessCoordinatorTest {
     void consumeArmsTheBaselineOnTheConsumedContent() {
         try (RoundLifecycleWitnessCoordinator coordinator =
                 new RoundLifecycleWitnessCoordinator();
-                NormalizedPuzzleFrame frameX = ProductionWitnessTestSupport.normalizedFrame(
+                FrameRecognitionObservation frameX = ProductionWitnessTestSupport.observation(
                         TARGET_X, ProductionWitnessTestSupport.candidateSeeds(BASE_X))) {
             coordinator.accept(stable(FingerprintId.FP_4, A_SET), frameX);
             assertFalse(coordinator.isWitnessArmed(), "Armed only after consumption");
@@ -60,18 +61,44 @@ class RoundLifecycleWitnessCoordinatorTest {
     }
 
     @Test
+    void wrongFrameConsumeIsRejectedAndLeavesBaselineIntact() {
+        try (RoundLifecycleWitnessCoordinator coordinator =
+                new RoundLifecycleWitnessCoordinator();
+                FrameRecognitionObservation frameX = ProductionWitnessTestSupport.observation(
+                        TARGET_X, ProductionWitnessTestSupport.candidateSeeds(BASE_X));
+                FrameRecognitionObservation frameY = ProductionWitnessTestSupport.observation(
+                        TARGET_Y, ProductionWitnessTestSupport.candidateSeedsWithChanges(BASE_X,
+                                0, 1, 2, 3, 4, 5, 6, 7))) {
+            coordinator.accept(stable(FingerprintId.FP_4, A_SET), frameX);
+            assertThrows(IllegalStateException.class,
+                    () -> coordinator.consumeReadyRound(frameY),
+                    "Consuming with a different observation must fail");
+            assertEquals(RoundLifecycleState.ROUND_READY, coordinator.state(),
+                    "A rejected consume leaves the lifecycle unconsumed");
+            assertFalse(coordinator.isWitnessArmed(),
+                    "A rejected consume arms no baseline");
+            assertTrue(coordinator.consumedIdentity().isEmpty());
+            coordinator.consumeReadyRound(frameX);
+            assertEquals(RoundLifecycleState.ROUND_CONSUMED, coordinator.state());
+            assertEquals(0, coordinator.evidenceFor(frameX).changedRegionCount(),
+                    "The baseline is the consumed frame X");
+            assertTrue(coordinator.evidenceFor(frameY).transitionConfirmed(),
+                    "Y still reads as changed against the X baseline");
+        }
+    }
+
+    @Test
     void differentVisualSameIdentityBecomesWitnessedReady() {
         try (RoundLifecycleWitnessCoordinator coordinator =
                 new RoundLifecycleWitnessCoordinator();
-                NormalizedPuzzleFrame frameX = ProductionWitnessTestSupport.normalizedFrame(
+                FrameRecognitionObservation frameX = ProductionWitnessTestSupport.observation(
                         TARGET_X, ProductionWitnessTestSupport.candidateSeeds(BASE_X));
-                NormalizedPuzzleFrame frameY = ProductionWitnessTestSupport.normalizedFrame(
+                FrameRecognitionObservation frameY = ProductionWitnessTestSupport.observation(
                         TARGET_Y, ProductionWitnessTestSupport.candidateSeedsWithChanges(BASE_X,
                                 0, 1, 2, 3, 4, 5, 6, 7))) {
             coordinator.accept(stable(FingerprintId.FP_4, A_SET), frameX);
             coordinator.consumeReadyRound(frameX);
-            coordinator.accept(uncertain(), null);
-
+            coordinator.accept(uncertain());
             RoundLifecycleStatus witnessed =
                     coordinator.accept(stable(FingerprintId.FP_4, A_SET), frameY);
             assertEquals(RoundLifecycleState.ROUND_READY, witnessed.state());
@@ -79,32 +106,28 @@ class RoundLifecycleWitnessCoordinatorTest {
             assertTrue(witnessed.transitionWitnessUsed());
         }
     }
-
     @Test
     void witnessedConsumptionRearmsTheBaselineToTheNewContent() {
         try (RoundLifecycleWitnessCoordinator coordinator =
                 new RoundLifecycleWitnessCoordinator();
-                NormalizedPuzzleFrame frameX = ProductionWitnessTestSupport.normalizedFrame(
+                FrameRecognitionObservation frameX = ProductionWitnessTestSupport.observation(
                         TARGET_X, ProductionWitnessTestSupport.candidateSeeds(BASE_X));
-                NormalizedPuzzleFrame frameY = ProductionWitnessTestSupport.normalizedFrame(
+                FrameRecognitionObservation frameY = ProductionWitnessTestSupport.observation(
                         TARGET_Y, ProductionWitnessTestSupport.candidateSeedsWithChanges(BASE_X,
                                 0, 1, 2, 3, 4, 5, 6, 7));
-                NormalizedPuzzleFrame frameYAgain = ProductionWitnessTestSupport.normalizedFrame(
-                        TARGET_Y, ProductionWitnessTestSupport.candidateSeedsWithChanges(BASE_X,
-                                0, 1, 2, 3, 4, 5, 6, 7))) {
-            // A1 consumed with visual X.
+                FrameRecognitionObservation frameYAgain =
+                        ProductionWitnessTestSupport.observation(TARGET_Y,
+                                ProductionWitnessTestSupport.candidateSeedsWithChanges(BASE_X,
+                                        0, 1, 2, 3, 4, 5, 6, 7))) {
             coordinator.accept(stable(FingerprintId.FP_4, A_SET), frameX);
             coordinator.consumeReadyRound(frameX);
-            // A2 appears with the same identity but new visual content: witnessed READY.
             RoundLifecycleStatus witnessed =
                     coordinator.accept(stable(FingerprintId.FP_4, A_SET), frameY);
             assertTrue(witnessed.transitionWitnessUsed());
-            // Consuming A2 re-arms the baseline to visual Y.
             coordinator.consumeReadyRound(frameY);
             assertEquals(RoundLifecycleState.ROUND_CONSUMED, coordinator.state());
             assertTrue(coordinator.isWitnessArmed());
-            // Unchanged Y afterwards must NOT emit an A3.
-            coordinator.accept(uncertain(), null);
+            coordinator.accept(uncertain());
             RoundLifecycleStatus suppressed =
                     coordinator.accept(stable(FingerprintId.FP_4, A_SET), frameYAgain);
             assertEquals(RoundLifecycleState.ROUND_CONSUMED, suppressed.state());
@@ -115,22 +138,56 @@ class RoundLifecycleWitnessCoordinatorTest {
     }
 
     @Test
+    void witnessedRearmWithStaleFrameIsRejected() {
+        try (RoundLifecycleWitnessCoordinator coordinator =
+                new RoundLifecycleWitnessCoordinator();
+                FrameRecognitionObservation frameX = ProductionWitnessTestSupport.observation(
+                        TARGET_X, ProductionWitnessTestSupport.candidateSeeds(BASE_X));
+                FrameRecognitionObservation frameY = ProductionWitnessTestSupport.observation(
+                        TARGET_Y, ProductionWitnessTestSupport.candidateSeedsWithChanges(BASE_X,
+                                0, 1, 2, 3, 4, 5, 6, 7));
+                FrameRecognitionObservation frameYAgain =
+                        ProductionWitnessTestSupport.observation(TARGET_Y,
+                                ProductionWitnessTestSupport.candidateSeedsWithChanges(BASE_X,
+                                        0, 1, 2, 3, 4, 5, 6, 7))) {
+            coordinator.accept(stable(FingerprintId.FP_4, A_SET), frameX);
+            coordinator.consumeReadyRound(frameX);
+            RoundLifecycleStatus witnessed =
+                    coordinator.accept(stable(FingerprintId.FP_4, A_SET), frameY);
+            assertTrue(witnessed.transitionWitnessUsed());
+            assertThrows(IllegalStateException.class,
+                    () -> coordinator.consumeReadyRound(frameX),
+                    "Re-arming with the stale X observation must fail");
+            assertEquals(RoundLifecycleState.ROUND_READY, coordinator.state(),
+                    "A rejected consume leaves the witnessed round pending");
+            assertEquals(0, coordinator.evidenceFor(frameX).changedRegionCount(),
+                    "The baseline is still the old X content");
+            coordinator.consumeReadyRound(frameY);
+            assertEquals(RoundLifecycleState.ROUND_CONSUMED, coordinator.state());
+            coordinator.accept(uncertain());
+            RoundLifecycleStatus suppressed =
+                    coordinator.accept(stable(FingerprintId.FP_4, A_SET), frameYAgain);
+            assertEquals(RoundLifecycleState.ROUND_CONSUMED, suppressed.state());
+            assertFalse(suppressed.newRoundReady(), "No third READY after the re-arm");
+            assertFalse(suppressed.transitionWitnessUsed());
+        }
+    }
+
+    @Test
     void witnessedPromotionWorksWithoutANewConsensusOnset() {
         try (RoundLifecycleWitnessCoordinator coordinator =
                 new RoundLifecycleWitnessCoordinator();
-                NormalizedPuzzleFrame frameX = ProductionWitnessTestSupport.normalizedFrame(
+                FrameRecognitionObservation frameX = ProductionWitnessTestSupport.observation(
                         TARGET_X, ProductionWitnessTestSupport.candidateSeeds(BASE_X));
-                NormalizedPuzzleFrame frameY = ProductionWitnessTestSupport.normalizedFrame(
+                FrameRecognitionObservation frameY = ProductionWitnessTestSupport.observation(
                         TARGET_Y, ProductionWitnessTestSupport.candidateSeedsWithChanges(BASE_X,
                                 0, 1, 2, 3, 4, 5, 6, 7))) {
             coordinator.accept(stable(FingerprintId.FP_4, A_SET), frameX);
             coordinator.consumeReadyRound(frameX);
-            // Continued STABLE of the same identity with no intervening break: silent.
             RoundLifecycleStatus silent =
                     coordinator.accept(stable(FingerprintId.FP_4, A_SET), frameX);
             assertEquals(RoundLifecycleState.ROUND_CONSUMED, silent.state());
             assertFalse(silent.newRoundReady());
-            // The same continued frame shape with new visual content segments a new round.
             RoundLifecycleStatus witnessed =
                     coordinator.accept(stable(FingerprintId.FP_4, A_SET), frameY);
             assertTrue(witnessed.newRoundReady());
@@ -142,41 +199,38 @@ class RoundLifecycleWitnessCoordinatorTest {
     void normalDifferentIdentityPathNeedsNoWitness() {
         try (RoundLifecycleWitnessCoordinator coordinator =
                 new RoundLifecycleWitnessCoordinator();
-                NormalizedPuzzleFrame frameX = ProductionWitnessTestSupport.normalizedFrame(
+                FrameRecognitionObservation frameX = ProductionWitnessTestSupport.observation(
                         TARGET_X, ProductionWitnessTestSupport.candidateSeeds(BASE_X));
-                NormalizedPuzzleFrame frameOther = ProductionWitnessTestSupport.normalizedFrame(
-                        TARGET_X, ProductionWitnessTestSupport.candidateSeeds(BASE_X))) {
+                FrameRecognitionObservation frameOther =
+                        ProductionWitnessTestSupport.observation(TARGET_X,
+                                ProductionWitnessTestSupport.candidateSeeds(BASE_X))) {
             coordinator.accept(stable(FingerprintId.FP_4, A_SET), frameX);
             coordinator.consumeReadyRound(frameX);
-            // Baseline X is armed, but a different identity becomes ready anyway.
             RoundLifecycleStatus next =
                     coordinator.accept(stable(FingerprintId.FP_3, B_SET), frameOther);
             assertEquals(RoundLifecycleState.ROUND_READY, next.state());
             assertTrue(next.newRoundReady());
             assertFalse(next.transitionWitnessUsed());
-            // Consuming B re-arms the baseline to B's consumed-frame content.
             coordinator.consumeReadyRound(frameOther);
             assertTrue(coordinator.isWitnessArmed());
         }
     }
-
     @Test
     void identityReuseAfterAnInterveningRoundRemainsValid() {
         try (RoundLifecycleWitnessCoordinator coordinator =
                 new RoundLifecycleWitnessCoordinator();
-                NormalizedPuzzleFrame frameX = ProductionWitnessTestSupport.normalizedFrame(
+                FrameRecognitionObservation frameX = ProductionWitnessTestSupport.observation(
                         TARGET_X, ProductionWitnessTestSupport.candidateSeeds(BASE_X));
-                NormalizedPuzzleFrame frameY = ProductionWitnessTestSupport.normalizedFrame(
+                FrameRecognitionObservation frameY = ProductionWitnessTestSupport.observation(
                         TARGET_Y, ProductionWitnessTestSupport.candidateSeeds(BASE_X))) {
             coordinator.accept(stable(FingerprintId.FP_4, A_SET), frameX);
             coordinator.consumeReadyRound(frameX);
-            coordinator.accept(uncertain(), null);
+            coordinator.accept(uncertain());
             coordinator.accept(stable(FingerprintId.FP_3, B_SET), frameY);
             coordinator.consumeReadyRound(frameY);
-            coordinator.accept(uncertain(), null);
+            coordinator.accept(uncertain());
             RoundLifecycleStatus reuse =
                     coordinator.accept(stable(FingerprintId.FP_4, A_SET), frameX);
-            // Current consumed identity is B, so A differs and becomes ready without witness.
             assertEquals(RoundLifecycleState.ROUND_READY, reuse.state());
             assertTrue(reuse.newRoundReady());
             assertFalse(reuse.transitionWitnessUsed());
@@ -187,26 +241,24 @@ class RoundLifecycleWitnessCoordinatorTest {
     void interruptionsNeverClearTheBaseline() {
         try (RoundLifecycleWitnessCoordinator coordinator =
                 new RoundLifecycleWitnessCoordinator();
-                NormalizedPuzzleFrame frameX = ProductionWitnessTestSupport.normalizedFrame(
+                FrameRecognitionObservation frameX = ProductionWitnessTestSupport.observation(
                         TARGET_X, ProductionWitnessTestSupport.candidateSeeds(BASE_X));
-                NormalizedPuzzleFrame frameY = ProductionWitnessTestSupport.normalizedFrame(
+                FrameRecognitionObservation frameY = ProductionWitnessTestSupport.observation(
                         TARGET_Y, ProductionWitnessTestSupport.candidateSeedsWithChanges(BASE_X,
                                 0, 1, 2, 3, 4, 5, 6, 7))) {
             coordinator.accept(stable(FingerprintId.FP_4, A_SET), frameX);
             coordinator.consumeReadyRound(frameX);
             assertTrue(coordinator.isWitnessArmed());
-            coordinator.accept(uncertain(), null);
-            coordinator.accept(LiveRecognitionStatus.captureError("backend failed"), null);
-            coordinator.accept(LiveRecognitionStatus.unsupportedFrame("not 2560x1440"), null);
+            coordinator.accept(uncertain());
+            coordinator.accept(LiveRecognitionStatus.captureError("backend failed"));
+            coordinator.accept(LiveRecognitionStatus.unsupportedFrame("not 2560x1440"));
             coordinator.accept(LiveRecognitionStatus.candidate(
                     Stage5TestSupport.syntheticRecognized(FingerprintId.FP_4, A_SET), 1, 3), frameX);
             assertTrue(coordinator.isWitnessArmed(), "Interruptions must not disarm");
-            // Same visual content later stabilizing stays suppressed.
             RoundLifecycleStatus suppressed =
                     coordinator.accept(stable(FingerprintId.FP_4, A_SET), frameX);
             assertEquals(RoundLifecycleState.ROUND_CONSUMED, suppressed.state());
             assertTrue(suppressed.consumedIdentityRepeated());
-            // New visual content still segments a witnessed round after the interruptions.
             RoundLifecycleStatus witnessed =
                     coordinator.accept(stable(FingerprintId.FP_4, A_SET), frameY);
             assertTrue(witnessed.transitionWitnessUsed());
@@ -217,7 +269,7 @@ class RoundLifecycleWitnessCoordinatorTest {
     void explicitResetClearsLifecycleAndBaseline() {
         try (RoundLifecycleWitnessCoordinator coordinator =
                 new RoundLifecycleWitnessCoordinator();
-                NormalizedPuzzleFrame frameX = ProductionWitnessTestSupport.normalizedFrame(
+                FrameRecognitionObservation frameX = ProductionWitnessTestSupport.observation(
                         TARGET_X, ProductionWitnessTestSupport.candidateSeeds(BASE_X))) {
             coordinator.accept(stable(FingerprintId.FP_4, A_SET), frameX);
             coordinator.consumeReadyRound(frameX);
@@ -237,16 +289,16 @@ class RoundLifecycleWitnessCoordinatorTest {
     void failedConsumeKeepsTheOldBaselineIntact() {
         try (RoundLifecycleWitnessCoordinator coordinator =
                 new RoundLifecycleWitnessCoordinator();
-                NormalizedPuzzleFrame frameX = ProductionWitnessTestSupport.normalizedFrame(
+                FrameRecognitionObservation frameX = ProductionWitnessTestSupport.observation(
                         TARGET_X, ProductionWitnessTestSupport.candidateSeeds(BASE_X));
-                NormalizedPuzzleFrame frameY = ProductionWitnessTestSupport.normalizedFrame(
+                FrameRecognitionObservation frameY = ProductionWitnessTestSupport.observation(
                         TARGET_Y, ProductionWitnessTestSupport.candidateSeedsWithChanges(BASE_X,
                                 0, 1, 2, 3, 4, 5, 6, 7))) {
             coordinator.accept(stable(FingerprintId.FP_4, A_SET), frameX);
             coordinator.consumeReadyRound(frameX);
-            // No round is pending: consuming again must fail without touching the baseline.
             assertThrows(IllegalStateException.class,
-                    () -> coordinator.consumeReadyRound(frameY));
+                    () -> coordinator.consumeReadyRound(frameY),
+                    "No round is pending and frameY was never the consumable observation");
             assertEquals(RoundLifecycleState.ROUND_CONSUMED, coordinator.state());
             assertTrue(coordinator.isWitnessArmed());
             assertEquals(0, coordinator.evidenceFor(frameX).changedRegionCount(),
@@ -255,12 +307,11 @@ class RoundLifecycleWitnessCoordinatorTest {
                     "Y must still read as changed against X");
         }
     }
-
     @Test
-    void nullPuzzleConsumeDoesNotConsumeTheRound() {
+    void nullObservationConsumeDoesNotConsumeTheRound() {
         try (RoundLifecycleWitnessCoordinator coordinator =
                 new RoundLifecycleWitnessCoordinator();
-                NormalizedPuzzleFrame frameX = ProductionWitnessTestSupport.normalizedFrame(
+                FrameRecognitionObservation frameX = ProductionWitnessTestSupport.observation(
                         TARGET_X, ProductionWitnessTestSupport.candidateSeeds(BASE_X))) {
             coordinator.accept(stable(FingerprintId.FP_4, A_SET), frameX);
             assertThrows(NullPointerException.class,
@@ -268,26 +319,60 @@ class RoundLifecycleWitnessCoordinatorTest {
             assertEquals(RoundLifecycleState.ROUND_READY, coordinator.state(),
                     "A failed preparation must leave the lifecycle unconsumed");
             assertFalse(coordinator.isWitnessArmed());
-            // The round is still consumable with its real content.
             coordinator.consumeReadyRound(frameX);
             assertEquals(RoundLifecycleState.ROUND_CONSUMED, coordinator.state());
         }
     }
 
     @Test
-    void staleConsumeKeepsTheOldBaseline() {
+    void consumeAfterUncertainIsRejected() {
         try (RoundLifecycleWitnessCoordinator coordinator =
                 new RoundLifecycleWitnessCoordinator();
-                NormalizedPuzzleFrame frameX = ProductionWitnessTestSupport.normalizedFrame(
+                FrameRecognitionObservation frameX = ProductionWitnessTestSupport.observation(
                         TARGET_X, ProductionWitnessTestSupport.candidateSeeds(BASE_X))) {
             coordinator.accept(stable(FingerprintId.FP_4, A_SET), frameX);
-            coordinator.accept(uncertain(), null);
-            // The ready round is stale: the latest consensus left it.
+            coordinator.accept(uncertain());
             assertThrows(IllegalStateException.class,
-                    () -> coordinator.consumeReadyRound(frameX));
-            assertEquals(RoundLifecycleState.ROUND_READY, coordinator.state());
+                    () -> coordinator.consumeReadyRound(frameX),
+                    "The pending round is stale and the observation is no longer consumable");
+            assertEquals(RoundLifecycleState.ROUND_READY, coordinator.state(),
+                    "A rejected consume keeps the pending round");
             assertFalse(coordinator.isWitnessArmed(),
                     "A failed consume must not arm a baseline");
+        }
+    }
+
+    @Test
+    void closedObservationConsumeIsRejected() {
+        RoundLifecycleWitnessCoordinator coordinator = new RoundLifecycleWitnessCoordinator();
+        FrameRecognitionObservation frameX = ProductionWitnessTestSupport.observation(
+                TARGET_X, ProductionWitnessTestSupport.candidateSeeds(BASE_X));
+        try {
+            coordinator.accept(stable(FingerprintId.FP_4, A_SET), frameX);
+            frameX.close();
+            assertThrows(IllegalStateException.class,
+                    () -> coordinator.consumeReadyRound(frameX),
+                    "Observation content is no longer usable after close");
+            assertEquals(RoundLifecycleState.ROUND_READY, coordinator.state(),
+                    "A rejected consume leaves the lifecycle unconsumed");
+            assertFalse(coordinator.isWitnessArmed());
+            assertTrue(coordinator.consumedIdentity().isEmpty());
+        } finally {
+            frameX.close();
+            coordinator.close();
+        }
+    }
+
+    @Test
+    void acceptClosedObservationIsRejected() {
+        try (RoundLifecycleWitnessCoordinator coordinator =
+                new RoundLifecycleWitnessCoordinator();
+                FrameRecognitionObservation frameX = ProductionWitnessTestSupport.observation(
+                        TARGET_X, ProductionWitnessTestSupport.candidateSeeds(BASE_X))) {
+            frameX.close();
+            assertThrows(IllegalStateException.class,
+                    () -> coordinator.accept(stable(FingerprintId.FP_4, A_SET), frameX));
+            assertEquals(RoundLifecycleState.WAITING_FOR_STABLE, coordinator.state());
         }
     }
 
@@ -295,14 +380,15 @@ class RoundLifecycleWitnessCoordinatorTest {
     void pendingRoundPlusDifferentStableDesynchronizes() {
         try (RoundLifecycleWitnessCoordinator coordinator =
                 new RoundLifecycleWitnessCoordinator();
-                NormalizedPuzzleFrame frameX = ProductionWitnessTestSupport.normalizedFrame(
+                FrameRecognitionObservation frameX = ProductionWitnessTestSupport.observation(
                         TARGET_X, ProductionWitnessTestSupport.candidateSeeds(BASE_X))) {
             coordinator.accept(stable(FingerprintId.FP_4, A_SET), frameX);
             RoundLifecycleStatus clash =
                     coordinator.accept(stable(FingerprintId.FP_3, B_SET), frameX);
             assertEquals(RoundLifecycleState.DESYNCHRONIZED, clash.state());
             assertThrows(IllegalStateException.class,
-                    () -> coordinator.consumeReadyRound(frameX));
+                    () -> coordinator.consumeReadyRound(frameX),
+                    "Desynchronization leaves no consumable observation");
         }
     }
 
@@ -312,7 +398,7 @@ class RoundLifecycleWitnessCoordinatorTest {
         coordinator.close();
         assertTrue(coordinator.closed());
         coordinator.close();
-        try (NormalizedPuzzleFrame frameX = ProductionWitnessTestSupport.normalizedFrame(
+        try (FrameRecognitionObservation frameX = ProductionWitnessTestSupport.observation(
                 TARGET_X, ProductionWitnessTestSupport.candidateSeeds(BASE_X))) {
             assertThrows(IllegalStateException.class,
                     () -> coordinator.accept(stable(FingerprintId.FP_4, A_SET), frameX));

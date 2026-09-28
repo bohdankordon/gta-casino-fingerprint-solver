@@ -19,8 +19,14 @@ import java.util.Objects;
  * layer decides whether confirmed evidence matters; the evidence itself only reports what the
  * pixels did.
  *
+ * The constructor enforces self-consistency: {@code changedRegionCount} must equal the number
+ * of similarities strictly below the production cut, and {@code transitionConfirmed} must
+ * equal whether that count reaches the production required count. Use {@link #of(double, List)}
+ * to derive both from similarities by construction.
+ *
  * @param transitionConfirmed true when the structural rule confirmed a content transition
- * @param changedRegionCount number of the nine regions below the similarity cut, {@code 0..9}
+ * @param changedRegionCount number of the nine regions below the similarity cut, {@code 0..9},
+ *        derived from the similarity values
  * @param targetSimilarity baseline target vs current target, in {@code [0, 1]}
  * @param candidateSimilarities baseline candidate {@code i} vs current candidate {@code i}, in
  *        row-major {@code 0..7} order, each in {@code [0, 1]}
@@ -32,12 +38,6 @@ public record PuzzleContentTransitionEvidence(
         List<Double> candidateSimilarities) {
 
     public PuzzleContentTransitionEvidence {
-        if (changedRegionCount < 0
-                || changedRegionCount > PuzzleContentTransitionWitness.TOTAL_REGIONS) {
-            throw new IllegalArgumentException("changedRegionCount must be within 0.."
-                    + PuzzleContentTransitionWitness.TOTAL_REGIONS + ", got "
-                    + changedRegionCount);
-        }
         requireScore("targetSimilarity", targetSimilarity);
         Objects.requireNonNull(candidateSimilarities, "candidateSimilarities");
         if (candidateSimilarities.size() != 8) {
@@ -52,6 +52,30 @@ public record PuzzleContentTransitionEvidence(
             copy.add(value);
         }
         candidateSimilarities = List.copyOf(copy);
+        int actualChangedRegions =
+                (targetSimilarity < PuzzleContentTransitionWitness.STRUCTURAL_SIMILARITY_CUT
+                        ? 1
+                        : 0);
+        for (double value : candidateSimilarities) {
+            if (value < PuzzleContentTransitionWitness.STRUCTURAL_SIMILARITY_CUT) {
+                actualChangedRegions++;
+            }
+        }
+        if (changedRegionCount != actualChangedRegions) {
+            throw new IllegalArgumentException("changedRegionCount " + changedRegionCount
+                    + " is inconsistent with the similarity values, which change "
+                    + actualChangedRegions + " of "
+                    + PuzzleContentTransitionWitness.TOTAL_REGIONS + " regions below "
+                    + PuzzleContentTransitionWitness.STRUCTURAL_SIMILARITY_CUT);
+        }
+        boolean expectedConfirmed =
+                actualChangedRegions >= PuzzleContentTransitionWitness.REQUIRED_CHANGED_REGIONS;
+        if (transitionConfirmed != expectedConfirmed) {
+            throw new IllegalArgumentException("transitionConfirmed " + transitionConfirmed
+                    + " is inconsistent with " + actualChangedRegions + " changed regions: "
+                    + "confirmation requires at least "
+                    + PuzzleContentTransitionWitness.REQUIRED_CHANGED_REGIONS);
+        }
     }
 
     /**
@@ -61,6 +85,40 @@ public record PuzzleContentTransitionEvidence(
     public static PuzzleContentTransitionEvidence absent() {
         return new PuzzleContentTransitionEvidence(false, 0, 1.0,
                 List.of(1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0));
+    }
+
+    /**
+     * Canonical evidence for one comparison: the changed-region count and the confirmation
+     * flag are derived from the similarity values with the production rule, so the result
+     * is self-consistent by construction. Prefer this factory over the canonical
+     * constructor whenever the values come from a real comparison.
+     *
+     * @param targetSimilarity baseline target vs current target, in {@code [0, 1]}
+     * @param candidateSimilarities baseline candidate {@code i} vs current candidate
+     *        {@code i}, in row-major {@code 0..7} order, each in {@code [0, 1]}
+     */
+    public static PuzzleContentTransitionEvidence of(double targetSimilarity,
+            List<Double> candidateSimilarities) {
+        requireScore("targetSimilarity", targetSimilarity);
+        Objects.requireNonNull(candidateSimilarities, "candidateSimilarities");
+        if (candidateSimilarities.size() != 8) {
+            throw new IllegalArgumentException(
+                    "Exactly 8 candidate similarities are required, got "
+                            + candidateSimilarities.size());
+        }
+        int changed = targetSimilarity
+                        < PuzzleContentTransitionWitness.STRUCTURAL_SIMILARITY_CUT
+                ? 1
+                : 0;
+        for (double value : candidateSimilarities) {
+            requireScore("candidate similarity", value);
+            if (value < PuzzleContentTransitionWitness.STRUCTURAL_SIMILARITY_CUT) {
+                changed++;
+            }
+        }
+        return new PuzzleContentTransitionEvidence(
+                changed >= PuzzleContentTransitionWitness.REQUIRED_CHANGED_REGIONS, changed,
+                targetSimilarity, candidateSimilarities);
     }
 
     /** Number of the eight candidates below the similarity cut. */

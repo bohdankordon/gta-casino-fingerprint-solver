@@ -198,17 +198,7 @@ public final class PuzzleContentTransitionWitness implements AutoCloseable {
             similarities.add(scorer.score(baselineCandidates.get(index),
                     currentCandidates.get(index), FragmentMatcher.TRANSLATION_RADIUS).value());
         }
-        int changed = 0;
-        if (targetSimilarity < STRUCTURAL_SIMILARITY_CUT) {
-            changed++;
-        }
-        for (double similarity : similarities) {
-            if (similarity < STRUCTURAL_SIMILARITY_CUT) {
-                changed++;
-            }
-        }
-        return new PuzzleContentTransitionEvidence(changed >= REQUIRED_CHANGED_REGIONS, changed,
-                targetSimilarity, List.copyOf(similarities));
+        return PuzzleContentTransitionEvidence.of(targetSimilarity, similarities);
     }
 
     /**
