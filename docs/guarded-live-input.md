@@ -344,8 +344,7 @@ the suite. No CI test emits OS keyboard input, and no unit test sleeps.
   witnessed, counterfactual 8/8 with 4 witnessed, 0 desync, 0 consume failures,
   identical ready frames).
 - `DryRunSolverMain` behaviour and surface guards: unchanged and green.
-- Full suite: 536 tests, 0 failures, 0 errors (Linux-safe: no test emits input, Windows
- - Full suite: 542 tests, 0 failures, 0 errors (Linux-safe: no test emits input, Windows
+- Full suite: 542 tests, 0 failures, 0 errors (Linux-safe: no test emits input, Windows
   natives never execute in CI).
 
 ## Dependencies and platform isolation
