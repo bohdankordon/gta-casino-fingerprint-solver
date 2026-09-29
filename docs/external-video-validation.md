@@ -74,6 +74,26 @@ observed round, a selection that clears or shrinks while the same puzzle continu
 the current attempt: the previous attempt is kept as failed/ambiguous history, never as
 ground truth. Brief detector ambiguity preserves state and invents no change.
 
+Before any control reading may mutate an attempt, an evaluation-only puzzle-panel
+presence gate must report PRESENT. The gate measures four static chrome anchors
+(timeout, clone-target, components, access-attempts header bars) plus central green
+excess for the HACK SUCCESS overlay. It never uses the predicted fingerprint id, the
+candidate set, solver confidence, or the selected set itself. While presence is ABSENT
+or AMBIGUOUS the tracker preserves prior state: no round is started, no selection is
+recorded, and no four-set is replaced from walls, HACK SUCCESS screens, gameplay, or
+other non-puzzle pixels.
+
+After a first four-set, the set freezes as the candidate successful attempt. A clear
+immediately after four does not eagerly fail it: the round enters FOUR_SELECTED_PENDING
+and waits for either a genuine same-puzzle retry (panel continuously PRESENT, new
+selection sequence proving the same puzzle continues, previous four kept as failed)
+or a credible structural next-round transition (previous four confirmed, next round
+seeded). A panel ABSENT gap after four proves the panel left: post-puzzle ROI readings
+are ignored, the frozen four survives, and a later credible transition confirms it.
+Direct cuts with no sampled absent frame stay pending; fast next-round input before
+recognition re-stabilizes does not convert the frozen four into a failure unless the
+same puzzle is proven. Anything indistinguishable fail-closes to NEEDS_REVIEW_AMBIGUOUS.
+
 The only automatic ground truth is a human four-set followed by a genuine structural
 next-round transition (the production lifecycle NEW_ROUND_READY, including witnessed
 same-identity transitions). Event attribution is explicit: a NEW_ROUND_READY event is
@@ -136,14 +156,24 @@ truth (see the report's predicted-FP-distribution note).
 
 Everything lands below ignored `target/stage8a/<session>/` and is never committed:
 
-- `screenshots/` - full frames at prediction and final-four moments;
+- `screenshots/` - full frames at prediction, final-four, transition, ambiguous, and
+  panel-presence moments (occurrence-indexed, for example
+  `round-002-final-four-01-full.png`);
 - `crops/` - panel, target and candidate crops for every key moment
-  (`round-001-start.png`, `round-001-prediction.png`, `round-001-final-four.png`,
-  `round-001-transition.png`, plus target/candidate crops);
+  (`round-001-start-01.png`, `round-001-prediction-01.png`,
+  `round-001-final-four-01.png`, `round-001-transition-01.png`, plus target/candidate
+  crops with the same occurrence suffix). Repeated moments never overwrite: the second
+  final-four becomes `round-002-final-four-02.png`, and so do its full, target, and
+  candidate files. For panel-absent, panel-ambiguous, and transition frames, full plus
+  broad panel-area crops are always preserved, but target and C0..C7 crops are written
+  only when panel presence on that frame is PRESENT, so walls, HACK SUCCESS screens,
+  and characters never produce meaningless candidate crops. Nothing is ever deleted.
 - `rounds.csv` - one benchmark row per observed round;
 - `events.csv` - changed-only event history (ROUND_START, PREDICTION,
   SELECTION_CHANGE, ATTEMPT_RESET, FOUR_SELECTED, NEW_ROUND_TRANSITION, ROUND_CONFIRMED,
-  AMBIGUOUS, SESSION_END);
+  PANEL_PRESENT, PANEL_ABSENT, PANEL_AMBIGUOUS, AMBIGUOUS, SESSION_END). Presence
+  events are logged only on change, never per frame, and explain why post-four
+  readings were ignored.
 - `report.txt` - concise human report with counts, predicted FP distribution and
   per-round outcomes;
 - `session.json` - session metadata plus outcome counts.
@@ -160,6 +190,26 @@ videos (more if easy). Report on-time predicted rounds, NO_PREDICTION, LATE_PRED
 MATCH, MISMATCH and NEEDS_REVIEW separately. Any MISMATCH is a mandatory review case
 before Stage 8B. Collect predicted-FP2 cases, but count actual FP2 coverage only after
 manual target confirmation.
+
+## Post-puzzle attribution (youtube-clean-01)
+
+The first clean external session exposed a harness attribution bug, not a solver bug:
+after the real fingerprint UI ended, fixed candidate ROIs evaluated over HACK SUCCESS
+screens, gameplay, walls, and characters occasionally produced plausible selected sets
+(the same bogus [2,3,6,7] appeared in unrelated rounds), fabricating MISMATCH results.
+All six recognition predictions had matched the first real human four-sets. The source
+itself remains clean: uncropped fullscreen gameplay, no picture-in-picture, no facecam,
+six human rounds all solved correctly on the first attempt. The fix is the presence gate
+above plus the post-four freeze, pending retry logic, occurrence-indexed evidence, and
+present-only target/candidate crops. Old `youtube-clean-01` artifacts must not be
+rewritten or claimed as fixed: after review and merge, the user replays the same video
+as a fresh `youtube-clean-01-v2` session and compares. No v2 result is claimed here.
+
+## Excluded source (youtube-01)
+
+`target/stage8a/youtube-01/` stays excluded from quantitative Stage 8A evidence because it
+contains a second fingerprint gameplay feed as picture-in-picture. It may be used only as
+adversarial or debug evidence, never counted in MATCH/MISMATCH numbers.
 
 ## Rehearsal (maintainers)
 
