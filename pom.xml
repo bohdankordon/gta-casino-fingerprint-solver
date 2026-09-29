@@ -20,6 +20,20 @@
             <artifactId>opencv-platform</artifactId>
             <version>4.14.0-1.5.14</version>
         </dependency>
+        <!-- Stage 7B guarded live input: Windows SendInput, foreground-window checks and
+             the F12 emergency-abort poll. JNA is pure Java plus bundled natives, so Linux
+             CI still compiles and tests; every Windows call lives behind the input.win32
+             package and refuses on non-Windows OSes. Versions are pinned explicitly. -->
+        <dependency>
+            <groupId>net.java.dev.jna</groupId>
+            <artifactId>jna</artifactId>
+            <version>5.17.0</version>
+        </dependency>
+        <dependency>
+            <groupId>net.java.dev.jna</groupId>
+            <artifactId>jna-platform</artifactId>
+            <version>5.17.0</version>
+        </dependency>
         <dependency>
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter</artifactId>
