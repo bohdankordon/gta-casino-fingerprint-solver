@@ -19,12 +19,14 @@ import org.junit.jupiter.api.Test;
  *
  * <p>The recording annotations, the private recordings and the whole benchmark are evaluation-only:
  * no production package may read them, no production class may depend on the evaluation package, and
- * no 1920x1080 layout may become a bundled production manifest. The guard is static source
- * inspection, so it fails the moment a production class starts reaching for benchmark material.
+ * no 1920x1080 layout may become a bundled production manifest. Evaluation covers every package
+ * below {@code evaluation/}: the Stage 6 recording benchmark and the Stage 8A external-video
+ * validation alike. The guard is static source inspection, so it fails the moment a production
+ * class starts reaching for benchmark material.
  */
 class EvaluationIsolationTest {
     private static final String EVALUATION_DIRECTORY =
-            "io/github/bohdankordon/casinofingerprint/evaluation/recording/";
+            "io/github/bohdankordon/casinofingerprint/evaluation/";
     private static final Path MAIN_SOURCES =
             RecordingTestSupport.PROJECT_ROOT.resolve("src/main/java");
     private static final Path EVALUATION_SOURCES = MAIN_SOURCES.resolve(EVALUATION_DIRECTORY);
@@ -51,11 +53,14 @@ class EvaluationIsolationTest {
     @Test
     void evaluationSourcesOwnTheAnnotationAndRecordingPaths() throws IOException {
         String catalog = Files.readString(
-                EVALUATION_SOURCES.resolve("RecordingAnnotationCatalog.java"), StandardCharsets.UTF_8);
+                EVALUATION_SOURCES.resolve("recording/RecordingAnnotationCatalog.java"),
+                StandardCharsets.UTF_8);
         String sources = Files.readString(
-                EVALUATION_SOURCES.resolve("RecordingSource.java"), StandardCharsets.UTF_8);
+                EVALUATION_SOURCES.resolve("recording/RecordingSource.java"),
+                StandardCharsets.UTF_8);
         String decoder = Files.readString(
-                EVALUATION_SOURCES.resolve("RecordingFrameDecoder.java"), StandardCharsets.UTF_8);
+                EVALUATION_SOURCES.resolve("recording/RecordingFrameDecoder.java"),
+                StandardCharsets.UTF_8);
 
         assertTrue(catalog.contains("fixtures/gameplay/recordings/stage6-rounds.csv"));
         assertTrue(catalog.contains("fixtures/gameplay/recordings/stage6-hack-windows.csv"));
