@@ -232,7 +232,11 @@ and only then may the first tap be sent. Any preflight failure sends nothing and
 nothing: the round stays ROUND_READY, and later stable frames of the same pending identity
 re-present the plan for a new preflight with the latest same-frame observation (the
 coordinator keeps the latest stable frame consumable while the identity stays ready).
-After the claim, every failure latches FAULTED or ABORTED with no auto-reset, no
+One final gate closes the race between a passing preflight and the commitment: abort and
+foreground are re-checked immediately before `consumeReadyRound`. An abort activated in
+that window latches ABORTED with no claim and no input; a lost foreground pin latches
+FAULTED (FOCUS_LOST) the same way. Only when both still hold is the round claimed exactly
+once. After the claim, every failure latches FAULTED or ABORTED with no auto-reset, no
 auto-retry and no lifecycle rollback; only an explicit reset or an application restart
 clears it.
 
@@ -251,10 +255,14 @@ C0 with an empty selected set.
   and the selected set grew by exactly the focused candidate.
 - PROCEED: requires the tracked set to equal all four plan candidates plus a fresh visual
   confirmation of exactly those four; pin and abort are checked again; Tab is sent once
-  and never retried. A bounded acknowledgement read follows (old control state gone =
-  acknowledged); either way the round COMPLETES with a `PROCEED_SENT` note when the
-  advance is not seen, and control returns to the recognition loop. Stage 8 validates
-  real round advance in GTA.
+  and never retried. A bounded acknowledgement read follows with four explicit outcomes:
+  an observed departure from the old control state acknowledges the transition
+  (COMPLETED); an ordinary no-ack timeout completes with a `PROCEED_SENT` note and the
+  recognition loop may resume (COMPLETED); an abort activated while awaiting the advance
+  latches ABORTED; a lost foreground pin latches FAULTED (FOCUS_LOST). The two safety
+  outcomes never roll the lifecycle back (Tab was already sent) but keep the executor
+  latched, so no later execution starts automatically and only COMPLETED rounds release
+  the executor for the next round. Stage 8 validates real round advance in GTA.
 
 Polling is bounded but never truthful: the interval (default 100 ms) only schedules fresh
 reads, the per-action timeout (default 5 s, about 150 frames) only fails, and success needs
@@ -309,8 +317,11 @@ code 3: restarting the application is the explicit reset.
 
 ## Test matrix (synthetic, deterministic, no input, no sleep)
 
-The executor matrix pins all 25 required behaviours with fake sinks, guards, abort
-signals, scripted control states and a manual clock: the exact mapped control sequence;
+The executor matrix pins all 25 required behaviours plus the two review-driven safety
+races (31 tests) with fake sinks, guards, abort signals, scripted control states and a
+manual clock: the exact mapped control sequence, the final pre-claim abort/foreground
+re-check with no claim on either race, the four distinguished post-PROCEED acknowledgement
+outcomes,
 start-focus, selected-set, ambiguity, foreground, abort and invalid/BLOCKED-plan refusals
 with zero taps and no consumption; first-navigate verification; wrong-focus and
 changed-selection faults; select success/timeout/wrong-candidate cases; focus loss and
@@ -334,6 +345,7 @@ the suite. No CI test emits OS keyboard input, and no unit test sleeps.
   identical ready frames).
 - `DryRunSolverMain` behaviour and surface guards: unchanged and green.
 - Full suite: 536 tests, 0 failures, 0 errors (Linux-safe: no test emits input, Windows
+ - Full suite: 542 tests, 0 failures, 0 errors (Linux-safe: no test emits input, Windows
   natives never execute in CI).
 
 ## Dependencies and platform isolation

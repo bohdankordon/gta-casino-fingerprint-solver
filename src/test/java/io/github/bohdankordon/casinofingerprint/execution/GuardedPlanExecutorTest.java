@@ -514,4 +514,118 @@ class GuardedPlanExecutorTest {
                 GuardedPlanExecutor.map(new DryRunAction.Select(GridPosition.C4)));
         assertEquals(GameControl.PROCEED, GuardedPlanExecutor.map(new DryRunAction.Proceed()));
     }
+
+    @Test
+    void abortActivatedBetweenPreflightAndClaimLatchesAbortedWithNoClaim() {
+        DryRunPlan plan = readyPlan();
+        Fixture fixture = new Fixture().script(at(0));
+        fixture.abort.script(false, true);
+        ExecutionReport report = fixture.executor.execute(plan, TARGET, fixture.claim);
+        assertEquals(ExecutionState.ABORTED, report.state());
+        assertEquals(0, fixture.claim.claims, "no claim after the race");
+        assertTrue(fixture.sink.taps().isEmpty(), "zero inputs");
+        assertEquals(ExecutionState.ABORTED, fixture.executor.state(), "latched");
+        assertTrue(report.summary().contains("before claim"), "diagnostic: "
+                + report.summary());
+    }
+
+    @Test
+    void foregroundLostBetweenPreflightAndClaimLatchesFaultWithNoClaim() {
+        DryRunPlan plan = readyPlan();
+        Fixture fixture = new Fixture().script(at(0));
+        fixture.foreground.scriptPinned(false);
+        ExecutionReport report = fixture.executor.execute(plan, TARGET, fixture.claim);
+        assertEquals(ExecutionState.FAULTED, report.state());
+        assertEquals(0, fixture.claim.claims, "no claim after the race");
+        assertTrue(fixture.sink.taps().isEmpty(), "zero inputs");
+        assertEquals(ExecutionState.FAULTED, fixture.executor.state(), "latched");
+        assertTrue(report.summary().contains("focus lost"), "diagnostic: "
+                + report.summary());
+        assertTrue(report.summary().contains("before claim"), "diagnostic: "
+                + report.summary());
+    }
+
+    @Test
+    void abortDuringProceedAcknowledgementLatchesAborted() {
+        DryRunPlan plan = readyPlan();
+        Fixture fixture =
+                new Fixture().script(successScript(plan).toArray(PuzzleControlState[]::new));
+        fixture.claim.sink = fixture.sink;
+        fixture.states.onPoll(count -> {
+            if (count == 16) {
+                fixture.abort.fire();
+            }
+        });
+        ExecutionReport report = fixture.executor.execute(plan, TARGET, fixture.claim);
+        assertEquals(ExecutionState.ABORTED, report.state());
+        assertEquals(expectedTaps(plan), fixture.sink.taps(), "Tab was already sent once");
+        assertEquals(1, fixture.sink.taps().stream()
+                .filter(tap -> tap == GameControl.PROCEED).count(), "no Tab retry");
+        assertEquals(1, fixture.claim.claims, "claimed exactly once");
+        assertEquals(16, fixture.states.polls(), "no polling after the latch");
+        assertThrows(IllegalStateException.class,
+                () -> fixture.executor.execute(plan, TARGET, fixture.claim),
+                "latched executions never run again without reset");
+        assertEquals(expectedTaps(plan), fixture.sink.taps(), "no retry taps");
+    }
+
+    @Test
+    void foregroundLostDuringProceedAcknowledgementLatchesFault() {
+        DryRunPlan plan = readyPlan();
+        Fixture fixture =
+                new Fixture().script(successScript(plan).toArray(PuzzleControlState[]::new));
+        fixture.claim.sink = fixture.sink;
+        fixture.states.onPoll(count -> {
+            if (count == 16) {
+                fixture.foreground.lose();
+            }
+        });
+        ExecutionReport report = fixture.executor.execute(plan, TARGET, fixture.claim);
+        assertEquals(ExecutionState.FAULTED, report.state());
+        assertEquals(expectedTaps(plan), fixture.sink.taps(), "Tab was already sent once");
+        assertEquals(1, fixture.sink.taps().stream()
+                .filter(tap -> tap == GameControl.PROCEED).count(), "no Tab retry");
+        assertEquals(1, fixture.claim.claims, "claimed exactly once");
+        assertTrue(report.summary().contains("focus lost"), "diagnostic: "
+                + report.summary());
+        assertThrows(IllegalStateException.class,
+                () -> fixture.executor.execute(plan, TARGET, fixture.claim),
+                "latched executions never run again without reset");
+        assertEquals(expectedTaps(plan), fixture.sink.taps(), "no retry taps");
+    }
+
+    @Test
+    void proceedAcknowledgementTimeoutCompletesWithSentNote() {
+        DryRunPlan plan = readyPlan();
+        List<PuzzleControlState> script = new ArrayList<>(successScript(plan));
+        PuzzleControlState oldState = script.get(script.size() - 2);
+        script.remove(script.size() - 1);
+        for (int repeat = 0; repeat < 30; repeat++) {
+            script.add(oldState);
+        }
+        Fixture fixture = new Fixture().script(new VerificationPolicy(5, 60, 1),
+                script.toArray(PuzzleControlState[]::new));
+        ExecutionReport report = fixture.executor.execute(plan, TARGET, fixture.claim);
+        assertEquals(ExecutionState.COMPLETED, report.state());
+        assertEquals(expectedTaps(plan), fixture.sink.taps(), "Tab sent exactly once");
+        assertEquals(1, fixture.sink.taps().stream()
+                .filter(tap -> tap == GameControl.PROCEED).count(), "no Tab retry");
+        assertTrue(report.summary().contains("PROCEED_SENT"), "sent note: "
+                + report.summary());
+        fixture.executor.reset();
+        assertEquals(ExecutionState.IDLE, fixture.executor.state(),
+                "timeout completion may reset for the next round");
+    }
+
+    @Test
+    void normalVisualAcknowledgementCompletes() {
+        DryRunPlan plan = readyPlan();
+        Fixture fixture = successFixture(plan);
+        ExecutionReport report = fixture.executor.execute(plan, TARGET, fixture.claim);
+        assertEquals(ExecutionState.COMPLETED, report.state());
+        assertEquals(1, fixture.sink.taps().stream()
+                .filter(tap -> tap == GameControl.PROCEED).count(), "Tab sent exactly once");
+        assertTrue(report.log().contains("round advance visually acknowledged"),
+                "acknowledgement note");
+    }
 }

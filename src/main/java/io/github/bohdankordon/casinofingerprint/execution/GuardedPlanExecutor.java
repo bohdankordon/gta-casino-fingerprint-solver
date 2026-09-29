@@ -39,14 +39,18 @@ import java.util.TreeSet;
  *       other than C0 or a non-empty selected set all return a BLOCKED report with the
  *       executor still IDLE, so the pending round survives for a later stable re-attempt;</li>
  *   <li>the lifecycle claim happens after every preflight gate passed and before the first
- *       gameplay input, exactly once;</li>
+ *       gameplay input, exactly once, with abort and foreground re-checked immediately
+ *       before the claim so a race between preflight and commitment latches instead of
+ *       consuming an unexecutable round;</li>
  *   <li>every NAVIGATE and SELECT is visually confirmed on fresh frames (configurable
  *       consecutive confirmations) before the next action: a clearly wrong focus, an
  *       unexpected selection change, a verification timeout, focus loss, abort or a send
  *       failure latches FAULTED or ABORTED, sends no further input, never auto-resets the
  *       lifecycle and never retries the round;</li>
  *   <li>PROCEED is sent exactly once and never retried; its acknowledgement only decides
- *       the completion note, never a second Tab.</li>
+ *       the completion note, never a second Tab: an ordinary no-ack timeout completes with
+ *       PROCEED_SENT, while abort or focus loss during the acknowledgement latch like any
+ *       other post-claim safety failure.</li>
  * </ul>
  *
  * <p>Single-threaded by construction: one executor belongs to one recognition stream, and
@@ -167,6 +171,18 @@ public final class GuardedPlanExecutor {
         }
         if (!start.selected().isEmpty()) {
             return blocked("BLOCKED: candidates already selected " + start.selected(), log);
+        }
+        // Final gate: every preflight safety condition must still hold immediately before
+        // the lifecycle commitment. A focus change or abort between the visual preflight and
+        // the claim must not consume a round that can no longer be executed: no claim, no
+        // input, latched until an explicit reset or restart.
+        if (abort.isActive()) {
+            return latched(ExecutionState.ABORTED,
+                    "ABORTED: emergency abort activated before claim", log, 0);
+        }
+        if (!foreground.isPinned(pin.get())) {
+            return latched(ExecutionState.FAULTED,
+                    "FAULTED: focus lost (foreground window changed) before claim", log, 0);
         }
         try {
             claim.consumeSameFrame();
@@ -432,18 +448,34 @@ public final class GuardedPlanExecutor {
         }
         tapOnce(GameControl.PROCEED, "PROCEED", taps);
         log.add("PROCEED -> sent");
-        boolean acknowledged = pollProceedAck(pin, planned);
-        state = ExecutionState.COMPLETED;
-        if (acknowledged) {
-            log.add("round advance visually acknowledged");
-        } else {
-            log.add("PROCEED_SENT: round advance not visually confirmed within bounds; "
-                    + "control returns to the recognition loop without a second Tab");
-        }
-        log.add("EXECUTION COMPLETE");
-        return new ExecutionReport(ExecutionState.COMPLETED, taps[0], log,
-                acknowledged ? "EXECUTION COMPLETE " + plan.identity().code()
-                        : "EXECUTION COMPLETE " + plan.identity().code() + " PROCEED_SENT");
+        return switch (pollProceedAck(pin, planned)) {
+            case ACKNOWLEDGED -> {
+                state = ExecutionState.COMPLETED;
+                log.add("round advance visually acknowledged");
+                log.add("EXECUTION COMPLETE");
+                yield new ExecutionReport(ExecutionState.COMPLETED, taps[0], log,
+                        "EXECUTION COMPLETE " + plan.identity().code());
+            }
+            case TIMEOUT -> {
+                state = ExecutionState.COMPLETED;
+                log.add("PROCEED_SENT: round advance not visually confirmed within bounds; "
+                        + "control returns to the recognition loop without a second Tab");
+                log.add("EXECUTION COMPLETE");
+                yield new ExecutionReport(ExecutionState.COMPLETED, taps[0], log,
+                        "EXECUTION COMPLETE " + plan.identity().code() + " PROCEED_SENT");
+            }
+            case ABORTED -> {
+                yield latched(ExecutionState.ABORTED,
+                        "ABORTED: emergency key detected while awaiting round advance", log,
+                        taps[0]);
+            }
+            case FOCUS_LOST -> {
+                yield latched(ExecutionState.FAULTED,
+                        "FAULTED: focus lost (foreground window changed)"
+                                + " while awaiting round advance",
+                        log, taps[0]);
+            }
+        };
     }
 
     private Poll pollProceedReady(ForegroundTarget pin, TreeSet<Integer> planned) {
@@ -480,31 +512,51 @@ public final class GuardedPlanExecutor {
     }
 
     /**
-     * Bounded acknowledgement read after PROCEED: true once the executed control state no
-     * longer persists (selection cleared, focus moved on, or the puzzle left). Never fails,
-     * never retries input: a missing acknowledgement only changes the completion note.
+     * Acknowledgement outcome after PROCEED. Tab was already sent exactly once when this
+     * runs, so nothing here retries input: an observed departure from the executed control
+     * state acknowledges the transition, an ordinary no-ack timeout completes with a
+     * PROCEED_SENT note, and abort or focus loss latch for an explicit reset or restart
+     * without rolling the lifecycle back.
      */
-    private boolean pollProceedAck(ForegroundTarget pin, TreeSet<Integer> planned) {
+    private AckOutcome pollProceedAck(ForegroundTarget pin, TreeSet<Integer> planned) {
         GridPosition lastFocus = null;
         long deadline = clock.nanos() + verification.actionTimeoutMillis() * 1_000_000L;
         while (true) {
-            if (abort.isActive() || !foreground.isPinned(pin)) {
-                return false;
+            if (abort.isActive()) {
+                return AckOutcome.ABORTED;
+            }
+            if (!foreground.isPinned(pin)) {
+                return AckOutcome.FOCUS_LOST;
             }
             if (clock.nanos() >= deadline) {
-                return false;
+                return AckOutcome.TIMEOUT;
             }
             PuzzleControlState seen = states.poll();
             if (!seen.valid() || !seen.selected().equals(planned)) {
-                return true;
+                return AckOutcome.ACKNOWLEDGED;
             }
             if (lastFocus == null) {
                 lastFocus = seen.focus().orElse(null);
             } else if (!seen.focus().orElse(null).equals(lastFocus)) {
-                return true;
+                return AckOutcome.ACKNOWLEDGED;
             }
             sleepPoll();
         }
+    }
+
+    /**
+     * What the bounded post-PROCEED read observed. Only TIMEOUT completes quietly; the
+     * safety outcomes latch the executor exactly like any other post-claim failure.
+     */
+    private enum AckOutcome {
+        /** The executed control state departed: the round moved on. */
+        ACKNOWLEDGED,
+        /** No departure seen within bounds: completes with a PROCEED_SENT note. */
+        TIMEOUT,
+        /** Abort activated while awaiting the advance: latched, no reset. */
+        ABORTED,
+        /** Foreground pin lost while awaiting the advance: latched, no reset. */
+        FOCUS_LOST
     }
 
     private void sleepPoll() {
