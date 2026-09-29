@@ -137,7 +137,7 @@ class EvaluationIsolationTest {
             files = listed.map(path -> path.getFileName().toString()).sorted().toList();
         }
         assertEquals(List.of("README.md", "stage6-hack-windows.csv", "stage6-rounds.csv",
-                "stage6-sources.csv"), files,
+                "stage6-sources.csv", "stage7b-control-states.csv"), files,
                 "the committed recording fixture holds annotations only: no frames, no contact "
                         + "sheets, no videos");
     }

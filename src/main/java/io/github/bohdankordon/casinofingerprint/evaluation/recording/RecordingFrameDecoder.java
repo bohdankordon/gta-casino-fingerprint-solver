@@ -68,6 +68,22 @@ public final class RecordingFrameDecoder implements AutoCloseable {
      */
     public static RecordingFrameDecoder open(Path video, int expectedWidth, int expectedHeight)
             throws IOException {
+        return open(video, expectedWidth, expectedHeight, -1);
+    }
+
+    /**
+     * Opens {@code video} with an explicit OpenCV videoio backend preference, such as
+     * {@code CAP_FFMPEG} for frame-exact evaluation sampling.
+     *
+     * <p>The default {@link #open(Path, int, int)} path is untouched: every existing replay
+     * keeps its backend and its numbers. New callers that need a specific backend pass a
+     * non-negative {@code apiPreference}; negative keeps the default backend search.
+     *
+     * @throws IOException when the file does not exist or is not readable
+     * @throws IllegalStateException when the backend cannot open it or its metadata is unusable
+     */
+    public static RecordingFrameDecoder open(Path video, int expectedWidth, int expectedHeight,
+            int apiPreference) throws IOException {
         Objects.requireNonNull(video, "video");
         if (expectedWidth <= 0 || expectedHeight <= 0) {
             throw new IllegalArgumentException("Expected frame size must be positive");
@@ -77,7 +93,9 @@ public final class RecordingFrameDecoder implements AutoCloseable {
         }
         Loader.load(opencv_core.class);
         Loader.load(opencv_videoio.class);
-        VideoCapture capture = new VideoCapture(video.toString());
+        VideoCapture capture = apiPreference < 0
+                ? new VideoCapture(video.toString())
+                : new VideoCapture(video.toString(), apiPreference);
         boolean opened = capture.isOpened();
         if (!opened) {
             capture.close();
