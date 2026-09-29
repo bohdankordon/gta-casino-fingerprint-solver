@@ -261,6 +261,24 @@ explicit opt-in and on non-Windows. The real-recording evaluation agrees on 47/4
 states with no input sent during implementation or testing. Stage 8 still has to prove
 live-game reliability with controlled GTA end-to-end testing.
 
+## Guarded single-tap input diagnostics and delivery characterization (Stage 8C)
+
+Stage 8C.1 added the guarded one-tap diagnostic documented in
+docs/stage8c-input-diagnostics.md. Real manual evidence now exists: the negative foreground
+test and the abort test both PASS with zero input, but the current production
+`WindowsSendInputSink` batch produced NO visible GTA Enhanced reaction for `UP` and
+`SELECT`, while the same diagnostic and backend worked correctly in Notepad (`LEFT` and
+`SELECT`). Input delivery to GTA is therefore unresolved and Stage 8C is not complete.
+Stage 8C.2 adds a diagnostic-only delivery characterization probe documented in
+docs/stage8c-input-delivery-characterization.md: four explicit modes (`VK_BATCH` reusing
+the unchanged production batch, `VK_HOLD`, `SCANCODE_BATCH` and `SCANCODE_HOLD`),
+Set-1 scan codes with the extended-key flag for arrows and the main-Enter make code for
+SELECT, an explicit 10..200 ms hold whose failure paths always still submit the key-up, and
+a REQUIRED explicitly configured abort key because F12 is a Steam screenshot shortcut. No
+characterization result is claimed yet: the user runs the manual matrix after review and
+merge. Nothing was promoted to production, no production input path changed, BattlEye stays
+enabled and unchanged, no bypass technique exists, and Stage 8D is blocked.
+
 ## Roadmap
 
 1. Stage 0 - foundation
@@ -294,7 +312,14 @@ live-game reliability with controlled GTA end-to-end testing.
      CV_8UC3, 282 continuous frames, 0 unsupported frames, 0 capture errors, 43.4 ms
      average warmed capture; no Windows Graphics Capture / Desktop Duplication backend
      is needed)
-   - Stage 8C - guarded single-tap input diagnostics (implementation pending manual
-     validation: the guarded one-tap CLI documented in
-     docs/stage8c-input-diagnostics.md; not complete and not yet validated against
-     real GTA)
+   - Stage 8C - guarded single-tap input diagnostics (Stage 8C.1 complete: the guarded
+     one-tap CLI documented in docs/stage8c-input-diagnostics.md; the real manual
+     negative-foreground and abort guards PASS with zero input, but GTA Enhanced showed
+     no visible response to the production `VK_BATCH` `UP` and `SELECT` taps while the
+     Notepad controls PASS, so input delivery remains UNRESOLVED. Stage 8C.2 adds the
+     diagnostic-only delivery characterization probe documented in
+     docs/stage8c-input-delivery-characterization.md, pending manual validation after
+     merge; no production promotion)
+   - Stage 8C.3 - promotion of an evidenced delivery semantics (NOT started; only after the
+     human-run matrix identifies a working mode)
+   - Stage 8D - end-to-end vault testing (BLOCKED until Stage 8C passes)
