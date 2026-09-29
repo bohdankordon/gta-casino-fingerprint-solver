@@ -12,7 +12,9 @@ import io.github.bohdankordon.casinofingerprint.orchestration.FrameControlReader
 import java.io.IOException;
 import java.io.PrintStream;
 import java.nio.file.Path;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.function.LongSupplier;
@@ -28,7 +30,8 @@ import org.bytedeco.opencv.opencv_core.Rect;
  * <pre>
  * ScreenCapture
  *     -&gt; raw frame (borrowed for this iteration, always released here)
- *     -&gt; A. FrameControlReader for passive human-control observation
+ *     -&gt; A. evaluation-only panel-presence gate plus FrameControlReader for passive
+ *            human-control observation (plain data only)
  *     -&gt; B. DryRunSolveOrchestrator for recognition, consensus, lifecycle, witness,
  *            ROUND_READY and the optimal plan (zero gameplay input)
  *     -&gt; ExternalObservedRoundTracker bookkeeping plus local artifacts
@@ -54,6 +57,7 @@ public final class ExternalVideoSessionRunner {
     private final PrintStream err;
     private final LongSupplier elapsedMillis;
     private final Rect panelBox;
+    private final Map<String, Integer> evidenceCounts = new HashMap<>();
     private long frames;
     private long predictions;
     private boolean finalized;
@@ -122,10 +126,11 @@ public final class ExternalVideoSessionRunner {
         }
         try (Mat owned = frame) {
             PuzzleControlState control = readControl(owned);
+            ExternalPanelPresence presence = readPresence(owned);
             DryRunFrameResult result = orchestrator.onFrame(owned);
             frames++;
             long timestampMs = Math.max(0L, elapsedMillis.getAsLong());
-            tracker.onControl(timestampMs, control);
+            tracker.onObservation(timestampMs, presence, control);
             if (result.hasPlan() && result.plan().executable()) {
                 predictions++;
                 ExternalPrediction prediction = toPrediction(result.plan(),
@@ -142,7 +147,7 @@ public final class ExternalVideoSessionRunner {
             if (result.consumeFailure() != null) {
                 err.println("EXTERNAL: " + result.consumeFailure());
             }
-            reactToFreshEvents(owned);
+            reactToFreshEvents(owned, presence);
         }
     }
 
@@ -237,18 +242,19 @@ public final class ExternalVideoSessionRunner {
         }
     }
 
-    private void reactToFreshEvents(Mat frame) {
+    private void reactToFreshEvents(Mat frame, ExternalPanelPresence framePresence) {
         for (ExternalSessionEvent event : tracker.drainNewEvents()) {
             switch (event.type()) {
                 case ROUND_START -> {
                     out.println(String.format(Locale.ROOT, "%nROUND %d", event.round()));
-                    savePanelCrop(frame, event.round(), "start");
+                    savePanelCrop(frame, event.round(), "start", nextOccurrence(event.round(), "start"));
                 }
                 case PREDICTION -> {
                     out.println("prediction " + event.prediction());
-                    savePanelCrop(frame, event.round(), "prediction");
-                    saveFullFrame(frame, event.round(), "prediction");
-                    saveTargetAndCandidates(frame, event.round(), "prediction");
+                    int occurrence = nextOccurrence(event.round(), "prediction");
+                    savePanelCrop(frame, event.round(), "prediction", occurrence);
+                    saveFullFrame(frame, event.round(), "prediction", occurrence);
+                    saveTargetAndCandidates(frame, event.round(), "prediction", occurrence);
                 }
                 case SECOND_PREDICTION -> out.println("second prediction " + event.prediction()
                         + " surfaced; first kept as primary");
@@ -259,9 +265,10 @@ public final class ExternalVideoSessionRunner {
                 }
                 case FOUR_SELECTED -> {
                     out.println("human four selected=" + event.selected());
-                    savePanelCrop(frame, event.round(), "final-four");
-                    saveFullFrame(frame, event.round(), "final-four");
-                    saveTargetAndCandidates(frame, event.round(), "final-four");
+                    int occurrence = nextOccurrence(event.round(), "final-four");
+                    savePanelCrop(frame, event.round(), "final-four", occurrence);
+                    saveFullFrame(frame, event.round(), "final-four", occurrence);
+                    saveTargetAndCandidates(frame, event.round(), "final-four", occurrence);
                 }
                 case ATTEMPT_RESET ->
                     out.println("attempt reset; previous kept as failed/ambiguous");
@@ -271,15 +278,40 @@ public final class ExternalVideoSessionRunner {
                 }
                 case NEW_ROUND_TRANSITION -> {
                     out.println("transition observed " + event.prediction());
-                    savePanelCrop(frame, event.round(), "transition");
-                    saveFullFrame(frame, event.round(), "transition");
-                    saveTargetAndCandidates(frame, event.round(), "transition");
+                    int occurrence = nextOccurrence(event.round(), "transition");
+                    savePanelCrop(frame, event.round(), "transition", occurrence);
+                    saveFullFrame(frame, event.round(), "transition", occurrence);
+                    if (framePresence == ExternalPanelPresence.PRESENT) {
+                        saveTargetAndCandidates(frame, event.round(), "transition", occurrence);
+                    }
                 }
                 case AMBIGUOUS -> {
                     out.println("ambiguous boundary; evidence preserved for manual review");
-                    savePanelCrop(frame, event.round(), "ambiguous");
-                    saveFullFrame(frame, event.round(), "ambiguous");
-                    saveTargetAndCandidates(frame, event.round(), "ambiguous");
+                    int occurrence = nextOccurrence(event.round(), "ambiguous");
+                    savePanelCrop(frame, event.round(), "ambiguous", occurrence);
+                    saveFullFrame(frame, event.round(), "ambiguous", occurrence);
+                    if (framePresence == ExternalPanelPresence.PRESENT) {
+                        saveTargetAndCandidates(frame, event.round(), "ambiguous", occurrence);
+                    }
+                }
+                case PANEL_PRESENT -> {
+                    out.println("panel present");
+                    int occurrence = nextOccurrence(event.round(), "panel-present");
+                    savePanelCrop(frame, event.round(), "panel-present", occurrence);
+                    saveFullFrame(frame, event.round(), "panel-present", occurrence);
+                    saveTargetAndCandidates(frame, event.round(), "panel-present", occurrence);
+                }
+                case PANEL_ABSENT -> {
+                    out.println("panel absent; post-puzzle control ignored");
+                    int occurrence = nextOccurrence(event.round(), "panel-absent");
+                    savePanelCrop(frame, event.round(), "panel-absent", occurrence);
+                    saveFullFrame(frame, event.round(), "panel-absent", occurrence);
+                }
+                case PANEL_AMBIGUOUS -> {
+                    out.println("panel ambiguous; state preserved");
+                    int occurrence = nextOccurrence(event.round(), "panel-ambiguous");
+                    savePanelCrop(frame, event.round(), "panel-ambiguous", occurrence);
+                    saveFullFrame(frame, event.round(), "panel-ambiguous", occurrence);
                 }
                 case ORPHAN_PREDICTION ->
                     out.println("ORPHAN_PREDICTION " + event.prediction());
@@ -289,15 +321,16 @@ public final class ExternalVideoSessionRunner {
         }
     }
 
-    private void savePanelCrop(Mat frame, int round, String moment) {
+    private void savePanelCrop(Mat frame, int round, String moment, int occurrence) {
         cropAndWrite(frame, panelBox,
-                ExternalSessionWriter.cropsDir(sessionDir).resolve(roundFile(round, moment)));
+                ExternalSessionWriter.cropsDir(sessionDir)
+                        .resolve(roundFile(round, moment, occurrence)));
     }
 
-    private void saveFullFrame(Mat frame, int round, String moment) {
+    private void saveFullFrame(Mat frame, int round, String moment, int occurrence) {
         try {
             Path path = ExternalSessionWriter.screenshotsDir(sessionDir)
-                    .resolve(roundFile(round, moment + "-full"));
+                    .resolve(roundFullFile(round, moment, occurrence));
             if (!opencv_imgcodecs.imwrite(path.toString(), frame)) {
                 err.println("EXTERNAL: could not write " + path);
             }
@@ -306,16 +339,31 @@ public final class ExternalVideoSessionRunner {
         }
     }
 
-    private void saveTargetAndCandidates(Mat frame, int round, String moment) {
+    private void saveTargetAndCandidates(Mat frame, int round, String moment, int occurrence) {
         GameplayRegion target = layout.target();
         cropAndWrite(frame, toRect(target),
-                ExternalSessionWriter.cropsDir(sessionDir)
-                        .resolve(String.format(Locale.ROOT, "round-%03d-target-%s.png", round,
-                                moment)));
+                ExternalSessionWriter.cropsDir(sessionDir).resolve(String.format(Locale.ROOT,
+                        "round-%03d-target-%s-%02d.png", round, moment, occurrence)));
         for (GameplayRegion candidate : layout.candidatesRowMajor()) {
             cropAndWrite(frame, toRect(candidate),
                     ExternalSessionWriter.cropsDir(sessionDir).resolve(String.format(Locale.ROOT,
-                            "round-%03d-c%d-%s.png", round, candidate.candidateIndex(), moment)));
+                            "round-%03d-c%d-%s-%02d.png", round, candidate.candidateIndex(),
+                            moment, occurrence)));
+        }
+    }
+
+    private int nextOccurrence(int round, String moment) {
+        String key = round + "-" + moment;
+        int next = evidenceCounts.getOrDefault(key, 0) + 1;
+        evidenceCounts.put(key, next);
+        return next;
+    }
+
+    private ExternalPanelPresence readPresence(Mat frame) {
+        try {
+            return ExternalPuzzlePanelPresenceDetector.detect(frame, layout).presence();
+        } catch (RuntimeException e) {
+            return ExternalPanelPresence.AMBIGUOUS;
         }
     }
 
@@ -337,8 +385,13 @@ public final class ExternalVideoSessionRunner {
         }
     }
 
-    private static String roundFile(int round, String moment) {
-        return String.format(Locale.ROOT, "round-%03d-%s.png", round, moment);
+    private static String roundFile(int round, String moment, int occurrence) {
+        return String.format(Locale.ROOT, "round-%03d-%s-%02d.png", round, moment, occurrence);
+    }
+
+    private static String roundFullFile(int round, String moment, int occurrence) {
+        return String.format(Locale.ROOT, "round-%03d-%s-%02d-full.png", round, moment,
+                occurrence);
     }
 
     private static Rect panelBox(GameplayLayout layout) {

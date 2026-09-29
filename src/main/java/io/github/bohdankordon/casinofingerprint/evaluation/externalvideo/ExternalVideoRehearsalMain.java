@@ -190,7 +190,14 @@ public final class ExternalVideoRehearsalMain {
                                     "control read rejected the frame: " + e.getMessage(),
                                     new int[8], new int[8]);
                         }
-                        tracker.onControl(timestampMs, control);
+                        ExternalPanelPresence presence;
+                        try {
+                            presence = ExternalPuzzlePanelPresenceDetector
+                                    .detect(decoder.frame(), layout).presence();
+                        } catch (RuntimeException e) {
+                            presence = ExternalPanelPresence.AMBIGUOUS;
+                        }
+                        tracker.onObservation(timestampMs, presence, control);
                         DryRunFrameResult result = orchestrator.onFrame(decoder.frame());
                         if (result.hasPlan() && result.plan().executable()) {
                             DryRunPlan plan = result.plan();

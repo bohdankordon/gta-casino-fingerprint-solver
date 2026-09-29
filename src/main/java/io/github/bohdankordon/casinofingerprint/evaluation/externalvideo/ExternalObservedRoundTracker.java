@@ -74,8 +74,70 @@ public final class ExternalObservedRoundTracker {
     private ActiveRound active;
     private int nextRoundNumber = 1;
     private boolean sessionClosed;
+    private ExternalPanelPresence currentPresence = ExternalPanelPresence.PRESENT;
+    private ExternalPanelPresence lastLoggedPresence;
 
-    /** Feeds one passive control reading of the same borrowed frame. */
+    /**
+     * Feeds one evaluation-only panel-presence reading of the same borrowed frame.
+     *
+     * <p>Changed-only logging: PANEL_PRESENT, PANEL_ABSENT, and PANEL_AMBIGUOUS events are
+     * recorded only when presence changes, never one row per frame. When a four-set has
+     * already been observed, absent marks the frozen candidate as awaiting transition proof:
+     * later control readings are ignored until a credible new-round event confirms it.
+     * Presence is independent of solver recognition and never invents ground truth.
+     */
+    public void onPanelPresence(long timestampMs, ExternalPanelPresence presence) {
+        requireOpen();
+        requireTimestamp(timestampMs);
+        Objects.requireNonNull(presence, "presence");
+        ExternalPanelPresence previous = currentPresence;
+        currentPresence = presence;
+        if (presence == lastLoggedPresence) {
+            if (active != null && active.lastFourSet != null
+                    && presence == ExternalPanelPresence.ABSENT) {
+                active.absentAfterFour = true;
+            }
+            return;
+        }
+        lastLoggedPresence = presence;
+        int round = active == null ? 0 : active.roundNumber;
+        String prediction = active == null ? "" : active.predictionCode();
+        switch (presence) {
+            case PRESENT -> log(timestampMs, round, EventType.PANEL_PRESENT, "", "", prediction,
+                    previous == null ? "panel present" : "panel returned; was " + previous);
+            case ABSENT -> {
+                if (active != null && active.lastFourSet != null) {
+                    active.absentAfterFour = true;
+                    log(timestampMs, round, EventType.PANEL_ABSENT, "", "", prediction,
+                            "panel absent after four " + formatSet(active.lastFourSet)
+                                    + "; frozen as candidate, post-puzzle control ignored");
+                } else {
+                    log(timestampMs, round, EventType.PANEL_ABSENT, "", "", prediction,
+                            "panel absent; no control round invented");
+                }
+            }
+            case AMBIGUOUS -> log(timestampMs, round, EventType.PANEL_AMBIGUOUS, "", "",
+                    prediction, "panel ambiguous; state preserved, nothing invented");
+        }
+    }
+
+    /**
+     * Combined per-frame entry: presence first, then control, same timestamp. The runner
+     * calls this once per captured frame so gating and observation stay atomic.
+     */
+    public void onObservation(long timestampMs, ExternalPanelPresence presence,
+            PuzzleControlState state) {
+        onPanelPresence(timestampMs, presence);
+        onControl(timestampMs, state);
+    }
+
+    /**
+     * Feeds one passive control reading of the same borrowed frame, gated by panel presence.
+     *
+     * <p>Only present frames may mutate attempts. Absent or ambiguous frames preserve prior
+     * state: no round is started, no selection change is recorded, no four-set is replaced,
+     * and no failed attempt is invented from walls, HACK SUCCESS, or gameplay pixels.
+     */
     public void onControl(long timestampMs, PuzzleControlState state) {
         requireOpen();
         requireTimestamp(timestampMs);
@@ -88,6 +150,15 @@ public final class ExternalObservedRoundTracker {
             }
             if (active != null) {
                 active.lastFedValid = false;
+            }
+            return;
+        }
+        if (currentPresence != ExternalPanelPresence.PRESENT) {
+            if (active == null) {
+                return;
+            }
+            if (active.lastFourSet != null) {
+                active.absentAfterFour = true;
             }
             return;
         }
@@ -104,6 +175,7 @@ public final class ExternalObservedRoundTracker {
             }
             if (selected.size() == 4) {
                 started.lastFourSet = new TreeSet<>(selected);
+                started.fourPending = true;
             }
             active = started;
             log(timestampMs, started.roundNumber, EventType.ROUND_START, focus,
@@ -145,15 +217,72 @@ public final class ExternalObservedRoundTracker {
                     formatSet(selected), active.predictionCode(),
                     "selection grew from empty to " + formatSet(selected));
             if (selected.size() == 4) {
-                active.lastFourSet = new TreeSet<>(selected);
-                active.selectedAfterFour = false;
-                log(timestampMs, active.roundNumber, EventType.FOUR_SELECTED, focus,
-                        formatSet(selected), active.predictionCode(),
-                        "four selected; needs transition proof");
+                if (active.fourPending && active.lastFourSet != null
+                        && !selected.equals(active.lastFourSet)) {
+                    SortedSet<Integer> oldFour = new TreeSet<>(active.lastFourSet);
+                    boolean retryProven = active.prediction != null
+                            && new TreeSet<>(selected).equals(
+                                    new TreeSet<>(active.prediction.identity().candidates()))
+                            && !oldFour.equals(
+                                    new TreeSet<>(active.prediction.identity().candidates()));
+                    if (retryProven) {
+                        active.failedAttempts.add(oldFour);
+                        active.currentSelected.clear();
+                        active.currentSelected.addAll(selected);
+                        active.currentFocus = focus;
+                        active.lastFourSet = new TreeSet<>(selected);
+                        active.selectedAfterFour = false;
+                        active.fourPending = true;
+                        active.ambiguousBoundary = false;
+                        active.notes.append("retry ").append(formatSet(selected))
+                                .append(" replaces wrong ").append(formatSet(oldFour))
+                                .append(" at ").append(timestampMs).append("ms. ");
+                        log(timestampMs, active.roundNumber, EventType.ATTEMPT_RESET, focus,
+                                formatSet(selected), active.predictionCode(),
+                                "retry after clear: previous " + formatSet(oldFour)
+                                        + " kept as failed, retry is current");
+                        log(timestampMs, active.roundNumber, EventType.FOUR_SELECTED, focus,
+                                formatSet(selected), active.predictionCode(),
+                                "retry four selected; needs transition proof");
+                    } else {
+                        active.currentSelected.clear();
+                        active.currentSelected.addAll(selected);
+                        active.currentFocus = focus;
+                        active.selectedAfterFour = true;
+                        markAmbiguousBoundary(timestampMs,
+                                "new four " + formatSet(selected) + " after prior four "
+                                        + formatSet(oldFour)
+                                        + " with no absent gap; retry vs next-round early input"
+                                        + " indistinguishable, frozen preserved awaiting transition. ");
+                    }
+                } else {
+                    active.lastFourSet = new TreeSet<>(selected);
+                    active.selectedAfterFour = false;
+                    active.fourPending = true;
+                    log(timestampMs, active.roundNumber, EventType.FOUR_SELECTED, focus,
+                            formatSet(selected), active.predictionCode(),
+                            "four selected; needs transition proof");
+                }
+            } else if (active.fourPending && active.lastFourSet != null) {
+                active.selectedAfterFour = true;
+                markAmbiguousBoundary(timestampMs,
+                        "new selection " + formatSet(selected) + " after four "
+                                + formatSet(active.lastFourSet)
+                                + " with no absent gap; retry vs next-round early input"
+                                + " indistinguishable, frozen preserved awaiting transition. ");
             }
             return;
         }
         if (!previous.isEmpty() && selected.isEmpty()) {
+            if (active.lastFourSet != null) {
+                active.fourPending = true;
+                active.currentSelected.clear();
+                active.currentFocus = focus;
+                active.notes.append("clear after four ").append(formatSet(active.lastFourSet))
+                        .append(" at ").append(timestampMs)
+                        .append("ms; pending retry vs transition, no failure recorded. ");
+                return;
+            }
             active.failedAttempts.add(previous);
             active.currentSelected.clear();
             active.currentFocus = focus;
@@ -172,35 +301,78 @@ public final class ExternalObservedRoundTracker {
                 active.currentFocus = focus;
                 log(timestampMs, active.roundNumber, EventType.SELECTION_CHANGE, focus,
                         formatSet(selected), active.predictionCode(),
-                        "selection grew monotonically to " + formatSet(selected));
+                    "selection grew monotonically to " + formatSet(selected));
                 if (selected.size() == 4) {
                     active.lastFourSet = new TreeSet<>(selected);
                     active.selectedAfterFour = false;
+                    active.fourPending = true;
                     log(timestampMs, active.roundNumber, EventType.FOUR_SELECTED, focus,
                             formatSet(selected), active.predictionCode(),
                             "four selected; needs transition proof");
                 }
                 return;
             }
-            active.failedAttempts.add(previous);
-            active.currentSelected.clear();
-            active.currentSelected.addAll(selected);
-            active.currentFocus = focus;
-            if (selected.size() == 4) {
-                active.lastFourSet = new TreeSet<>(selected);
-                active.selectedAfterFour = false;
-            }
-            active.notes.append("attempt ").append(formatSet(previous))
-                    .append(" ended by contradictory selection ").append(formatSet(selected))
-                    .append(" at ").append(timestampMs).append("ms; kept as failed/ambiguous. ");
-            log(timestampMs, active.roundNumber, EventType.ATTEMPT_RESET, focus,
-                    formatSet(selected), active.predictionCode(),
-                    "selection changed from " + formatSet(previous) + " to "
-                            + formatSet(selected) + "; previous attempt kept, never ground truth");
-            if (selected.size() == 4) {
-                log(timestampMs, active.roundNumber, EventType.FOUR_SELECTED, focus,
+            if (active.lastFourSet != null && selected.size() == 4
+                    && !selected.equals(active.lastFourSet)) {
+                SortedSet<Integer> oldFour = new TreeSet<>(active.lastFourSet);
+                boolean retryProven = active.prediction != null
+                        && new TreeSet<>(selected).equals(
+                                new TreeSet<>(active.prediction.identity().candidates()))
+                        && !oldFour.equals(
+                                new TreeSet<>(active.prediction.identity().candidates()));
+                if (retryProven) {
+                    active.failedAttempts.add(new TreeSet<>(previous));
+                    active.currentSelected.clear();
+                    active.currentSelected.addAll(selected);
+                    active.currentFocus = focus;
+                    active.lastFourSet = new TreeSet<>(selected);
+                    active.selectedAfterFour = false;
+                    active.fourPending = true;
+                    active.ambiguousBoundary = false;
+                    active.notes.append("retry ").append(formatSet(selected))
+                            .append(" replaces wrong ").append(formatSet(oldFour))
+                            .append(" at ").append(timestampMs).append("ms. ");
+                    log(timestampMs, active.roundNumber, EventType.ATTEMPT_RESET, focus,
+                            formatSet(selected), active.predictionCode(),
+                            "retry: previous " + formatSet(previous)
+                                    + " kept as failed, retry is current");
+                    log(timestampMs, active.roundNumber, EventType.FOUR_SELECTED, focus,
+                            formatSet(selected), active.predictionCode(),
+                            "retry four selected; needs transition proof");
+                } else {
+                    active.currentSelected.clear();
+                    active.currentSelected.addAll(selected);
+                    active.currentFocus = focus;
+                    active.selectedAfterFour = true;
+                    active.fourPending = true;
+                    markAmbiguousBoundary(timestampMs,
+                            "contradictory four " + formatSet(selected) + " after prior four "
+                                    + formatSet(oldFour)
+                                    + " with no absent gap; retry vs next-round early input"
+                                    + " indistinguishable, frozen preserved awaiting transition. ");
+                }
+            } else {
+                active.failedAttempts.add(previous);
+                active.currentSelected.clear();
+                active.currentSelected.addAll(selected);
+                active.currentFocus = focus;
+                if (selected.size() == 4) {
+                    active.lastFourSet = new TreeSet<>(selected);
+                    active.selectedAfterFour = false;
+                    active.fourPending = true;
+                }
+                active.notes.append("attempt ").append(formatSet(previous))
+                        .append(" ended by contradictory selection ").append(formatSet(selected))
+                        .append(" at ").append(timestampMs).append("ms; kept as failed/ambiguous. ");
+                log(timestampMs, active.roundNumber, EventType.ATTEMPT_RESET, focus,
                         formatSet(selected), active.predictionCode(),
-                        "four selected; needs transition proof");
+                        "selection changed from " + formatSet(previous) + " to "
+                                + formatSet(selected) + "; previous attempt kept, never ground truth");
+                if (selected.size() == 4) {
+                    log(timestampMs, active.roundNumber, EventType.FOUR_SELECTED, focus,
+                            formatSet(selected), active.predictionCode(),
+                            "four selected; needs transition proof");
+                }
             }
         }
     }
@@ -357,7 +529,7 @@ public final class ExternalObservedRoundTracker {
                 }
                 return;
             }
-            if (active.currentSelected.equals(active.lastFourSet)) {
+            if (active.currentSelected.equals(active.lastFourSet) && !active.absentAfterFour) {
                 onPrediction(timestampMs, prediction);
                 markAmbiguousBoundary(timestampMs,
                         "FIRST prediction " + prediction.identity().code()
@@ -417,7 +589,7 @@ public final class ExternalObservedRoundTracker {
                         "same-identity NEW_ROUND_READY without witness treated as current-round duplicate; no confirmation");
                 return;
             }
-            if (active.currentSelected.equals(active.lastFourSet)) {
+            if (active.currentSelected.equals(active.lastFourSet) && !active.absentAfterFour) {
                 onPrediction(timestampMs, prediction);
                 markAmbiguousBoundary(timestampMs,
                         "witnessed same-identity " + prediction.identity().code()
@@ -449,7 +621,7 @@ public final class ExternalObservedRoundTracker {
                     "different-identity transition without an observed four-set; round stays open");
             return;
         }
-        if (active.currentSelected.equals(active.lastFourSet)) {
+        if (active.currentSelected.equals(active.lastFourSet) && !active.absentAfterFour) {
             onPrediction(timestampMs, prediction);
             markAmbiguousBoundary(timestampMs,
                     "different prediction " + prediction.identity().code()
@@ -593,13 +765,15 @@ public final class ExternalObservedRoundTracker {
     private ExternalObservedRound buildRound(ActiveRound round, long endMs,
             List<Integer> success, ExternalRoundOutcome result, ExternalPredictionTiming timing,
             boolean transitionWitnessUsed, String notes) {
-        int attempts = round.failedAttempts.size()
-                + (round.currentSelected.isEmpty() ? 0 : 1);
-        if (round.firstSelectionMs != null && attempts == 0) {
-            attempts = 1;
-        }
-        if (success != null && attempts == 0) {
-            attempts = 1;
+        int attempts;
+        if (success != null) {
+            attempts = round.failedAttempts.size() + 1;
+        } else {
+            attempts = round.failedAttempts.size()
+                    + (round.currentSelected.isEmpty() ? 0 : 1);
+            if (round.firstSelectionMs != null && attempts == 0) {
+                attempts = 1;
+            }
         }
         return new ExternalObservedRound(round.roundNumber, round.firstSeenMs,
                 round.predictionMs, round.firstSelectionMs, endMs,
@@ -647,6 +821,10 @@ public final class ExternalObservedRoundTracker {
             ExternalPrediction nextPrediction, String reason) {
         ActiveRound round = active;
         active = null;
+        if (round.lastFourSet != null && round.fourPending
+                && round.failedAttempts.stream().noneMatch(a -> a.equals(round.lastFourSet))) {
+            round.failedAttempts.add(new TreeSet<>(round.lastFourSet));
+        }
         ExternalObservedRound ambiguous = buildRound(round, timestampMs, null,
                 ExternalRoundOutcome.NEEDS_REVIEW_AMBIGUOUS, timingOf(round), false,
                 reason == null ? "" : reason);
@@ -699,6 +877,8 @@ public final class ExternalObservedRoundTracker {
         Long secondPredictionMs;
         SortedSet<Integer> lastFourSet;
         boolean selectedAfterFour;
+        boolean fourPending;
+        boolean absentAfterFour;
         boolean hadControl;
         boolean lastFedValid = true;
         boolean ambiguousBoundary;
