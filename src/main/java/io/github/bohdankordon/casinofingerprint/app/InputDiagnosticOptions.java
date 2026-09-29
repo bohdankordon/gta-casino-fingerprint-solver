@@ -150,7 +150,11 @@ public record InputDiagnosticOptions(String targetExecutable, GameControl contro
                 + separator
                 + "abort the invocation ends and nothing is retried. Exit codes: 0 tap sent"
                 + separator
-                + "(or help), 2 usage refusal, 3 refused with zero input."
+                + "(or help), 2 usage refusal, 3 runtime refusal or input failure. Ordinary"
+                + separator
+                + "refusals happen before any input and send nothing; an INPUT ERROR follows the"
+                + separator
+                + "one attempted tap and does not confirm complete delivery."
                 + separator;
     }
 

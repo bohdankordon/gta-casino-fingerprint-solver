@@ -170,8 +170,61 @@ class SingleTapInputDiagnosticTest {
                 .run(new InputDiagnosticRequest(TARGET, GameControl.UP, true, SECONDS));
         assertEquals(InputDiagnosticStatus.INPUT_ERROR, result.status(), "Status");
         assertFalse(result.sent(), "A failed tap is not a sent tap");
+        assertTrue(result.inputAttempted(), "The one tap invocation was reached");
         assertEquals(List.of(GameControl.UP), attempts, "One attempted tap, no retry");
         assertEquals(1, harness.guard.pinCalls(), "One pin");
+    }
+
+    @Test
+    void inputErrorInvokesTheSinkExactlyOnceAndNeverMarksTheRunAsSent() {
+        Harness harness = new Harness();
+        FakeGameInputSink sink = new FakeGameInputSink();
+        sink.refuseAtIndex(0);
+        InputDiagnosticResult result = new SingleTapInputDiagnostic(sink, harness.guard,
+                harness.abort, harness.sleeper, () -> true)
+                .run(new InputDiagnosticRequest(TARGET, GameControl.SELECT, true, SECONDS));
+        assertEquals(InputDiagnosticStatus.INPUT_ERROR, result.status(), "Status");
+        assertEquals(List.of(GameControl.SELECT), sink.attempts(),
+                "Exactly one sink invocation, no retry");
+        assertTrue(sink.taps().isEmpty(), "No complete tap was ever recorded");
+        assertFalse(result.sent(), "INPUT ERROR is never a successful SENT");
+        assertTrue(result.inputAttempted(), "The tap invocation was reached");
+        assertFalse(result.status().zeroInputGuaranteed(),
+                "INPUT ERROR must never claim zero input");
+        assertEquals(1000, harness.sleeper.totalMillis(), "The full countdown still ran first");
+    }
+
+    @Test
+    void inputErrorMessageStatesUnconfirmedDeliveryAndNoRetry() {
+        Harness harness = new Harness();
+        FakeGameInputSink sink = new FakeGameInputSink();
+        sink.refuseAtIndex(0);
+        InputDiagnosticResult result = new SingleTapInputDiagnostic(sink, harness.guard,
+                harness.abort, harness.sleeper, () -> true)
+                .run(new InputDiagnosticRequest(TARGET, GameControl.UP, true, SECONDS));
+        String message = result.message();
+        assertTrue(message.contains("attempted"), "States the attempt: " + message);
+        assertTrue(message.contains("not confirmed"), "States unconfirmed delivery: " + message);
+        assertTrue(message.contains("partial"), "States possible partial delivery: " + message);
+        assertTrue(message.contains("no second tap"), "States that no second tap follows: " + message);
+        assertFalse(message.contains("no input was sent"), "Never claims zero input: " + message);
+    }
+
+    @Test
+    void onlyTheTwoInputProducingStatusesAreNotAZeroInputGuarantee() {
+        assertTrue(InputDiagnosticStatus.SENT.inputAttempted(), "SENT reached the tap");
+        assertTrue(InputDiagnosticStatus.INPUT_ERROR.inputAttempted(),
+                "INPUT ERROR reached the tap");
+        assertFalse(InputDiagnosticStatus.SENT.zeroInputGuaranteed(), "SENT is not zero input");
+        assertFalse(InputDiagnosticStatus.INPUT_ERROR.zeroInputGuaranteed(),
+                "INPUT ERROR is not zero input");
+        for (InputDiagnosticStatus preTap : List.of(InputDiagnosticStatus.INPUT_DISABLED,
+                InputDiagnosticStatus.ABORTED, InputDiagnosticStatus.TARGET_NOT_FOREGROUND,
+                InputDiagnosticStatus.FOCUS_LOST, InputDiagnosticStatus.UNSUPPORTED_CONTROL,
+                InputDiagnosticStatus.NON_WINDOWS)) {
+            assertFalse(preTap.inputAttempted(), preTap + " refuses before the tap");
+            assertTrue(preTap.zeroInputGuaranteed(), preTap + " guarantees zero input");
+        }
     }
 
     @Test

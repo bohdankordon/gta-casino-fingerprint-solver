@@ -94,6 +94,31 @@ class InputDiagnosticIsolationTest {
         assertTrue(core.contains("GameControl"), "Reuses the Stage 7B control enum");
     }
 
+    @Test
+    void diagnosticTestsNeverConstructANativeBackend() throws IOException {
+        Path testRoot = Path.of(System.getProperty("user.dir"))
+                .resolve("src/test/java/io/github/bohdankordon/casinofingerprint/app");
+        List<String> offenders = new ArrayList<>();
+        try (Stream<Path> walk = Files.walk(testRoot)) {
+            for (Path source : walk.filter(path -> path.toString().endsWith(".java")).toList()) {
+                String name = source.getFileName().toString();
+                if (!name.startsWith("InputDiagnostic")
+                        && !name.equals("SingleTapInputDiagnosticTest.java")
+                        && !name.equals("FakeInputDiagnosticSleeper.java")) {
+                    continue;
+                }
+                String text = Files.readString(source, StandardCharsets.UTF_8);
+                for (String backend : NATIVE_BACKENDS) {
+                    if (text.contains("new " + backend)) {
+                        offenders.add(name + " constructs " + backend);
+                    }
+                }
+            }
+        }
+        assertTrue(offenders.isEmpty(),
+                "Stage 8C.1 tests must never construct a native input backend: " + offenders);
+    }
+
     /** Every production source of the Stage 8C.1 diagnostic. */
     private static List<Path> diagnosticSources() throws IOException {
         List<Path> sources = new ArrayList<>();

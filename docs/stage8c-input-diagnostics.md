@@ -35,10 +35,31 @@ One invocation may emit AT MOST ONE complete key tap (key down plus key up).
 - The countdown phase never sends input.
 - The tap happens only after every gate below has passed.
 - There is no retry: a tap that throws is reported as INPUT ERROR and never repeated.
+  INPUT ERROR still means the tap WAS attempted, so it is never reported as zero input.
 - There is no second tap: the run returns immediately after the single `sink.tap(...)`
   call, and nothing sleeps afterwards.
 - There is no loop, no repetition count and no automatic follow-up invocation. Each
   invocation is one process, one request, one possible tap.
+
+## INPUT ERROR is not zero input
+
+Every other status in this document happens BEFORE the tap and therefore guarantees zero
+input. `INPUT ERROR` is different, and the tool never describes it as "no input was sent".
+
+`INPUT ERROR` means exactly this:
+
+- the single allowed `sink.tap(control)` invocation was attempted;
+- complete tap delivery was NOT confirmed: the production backend
+  (`WindowsSendInputSink`) submits key-down plus key-up as ONE `SendInput` batch and
+  throws `GameInputException` when Windows reports fewer than two events delivered;
+- partial native delivery may therefore already have reached the foreground application
+  (for example one delivered event of two);
+- the backend's existing best-effort key-up cleanup applies when it detected a partial
+  batch, so no error path deliberately leaves a key held down;
+- nothing is retried: the run returns immediately and no second tap is ever attempted.
+
+The tool never claims that GTA reacted. A human operator must treat the attempted key as
+potentially delivered.
 
 ## Allowed controls
 
@@ -82,7 +103,10 @@ Missing any one, an unknown option, a duplicate value option, a malformed countd
 countdown outside 1..30 seconds refuses with zero input. Running the tool with no arguments
 refuses as well: there is no default mode that sends anything.
 
-Exit codes: 0 tap sent (or `--help`), 2 usage refusal, 3 refused with zero input.
+Exit codes: 0 tap sent (or `--help`), 2 usage refusal, 3 runtime refusal or input failure.
+Ordinary refusals happen before any input and guarantee zero input. Exit code 3 alone does
+not: an `INPUT ERROR` exits 3 after the one allowed tap attempt and does NOT guarantee zero
+native events. The tool therefore never prints "no input was sent" for an `INPUT ERROR`.
 
 ## Countdown and F12 abort
 
@@ -105,8 +129,9 @@ The countdown sleeps in fixed 100 ms poll steps and checks the F12 emergency abo
 every step. No input is sent during the countdown.
 
 If F12 is active at any point - before the countdown, during it, after the foreground pin,
-or immediately before the tap - the run refuses with ABORTED, sends zero input and exits.
-One invocation ends after an abort; nothing resumes and nothing is retried.
+or immediately before the tap - the run refuses with ABORTED (a pre-tap refusal, so zero
+input is guaranteed), sends nothing and exits. One invocation ends after an abort; nothing
+resumes and nothing is retried.
 
 ## Target executable foreground pin
 
@@ -141,6 +166,9 @@ abort idle AGAIN immediately before the tap
 sink.tap(control) exactly once
 return (no sleep, no retry, no second tap)
 ```
+
+A `sink.tap` that throws is reported as `INPUT ERROR`; that status is never described as
+zero input (see "INPUT ERROR is not zero input" above).
 
 ## No recognition, no solver, no repetition
 
@@ -186,12 +214,30 @@ D. SELECT test
    - one `SELECT` invocation;
    - expected: exactly one visible action, nothing else.
 
+E. INPUT ERROR case (only if it actually occurs)
+   - if `INPUT ERROR` occurs during a real diagnostic:
+     - treat the attempted key as potentially delivered;
+     - observe the current GTA state;
+     - do NOT immediately rerun automatically;
+     - return to a known harmless UI state before any later manual attempt.
+
 Success output is:
 
 ```
 DIAGNOSTIC SENT exactly one UP tap to pinned GTA5.exe target
 DIAGNOSTIC no further input will be sent
 DIAGNOSTIC diagnostic complete
+```
+
+An `INPUT ERROR` never prints "no input was sent"; it prints a distinct message instead:
+
+```
+DIAGNOSTIC INPUT ERROR: the tap backend failed (...): one tap was attempted and complete
+delivery was not confirmed, ...
+DIAGNOSTIC one tap was attempted but complete delivery was not confirmed; partial native
+input may have been delivered; no retry and no second tap will be attempted
+DIAGNOSTIC treat the attempted key as potentially delivered and check the current GTA state
+before any later manual attempt
 ```
 
 The tool never claims that GTA reacted correctly: the human observing the game validates

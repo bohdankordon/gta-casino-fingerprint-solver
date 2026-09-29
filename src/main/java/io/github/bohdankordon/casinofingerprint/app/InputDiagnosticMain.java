@@ -27,7 +27,9 @@ import java.util.function.Supplier;
  * complete tap, only after the explicit opt-in, the countdown, the F12 abort polls, the exact
  * executable foreground pin and the final pre-tap gates. On a non-Windows OS it refuses before
  * any native input backend is constructed. Exit codes: 0 tap sent (or help), 2 usage refusal,
- * 3 refused with zero input.
+ * 3 runtime refusal or input failure. An exit code of 3 does NOT by itself mean that no input
+ * was sent: ordinary refusals happen before the tap and guarantee zero input, while an
+ * INPUT ERROR follows the one allowed tap attempt and does not confirm complete delivery.
  */
 public final class InputDiagnosticMain {
     static final int EXIT_OK = 0;
@@ -91,21 +93,32 @@ public final class InputDiagnosticMain {
                 options.control(), true, options.countdownSeconds());
         InputDiagnosticResult result = new SingleTapInputDiagnostic(natives.sink(),
                 natives.guard(), natives.abort(), sleeper, windows).run(request);
-        if (!result.sent()) {
-            err.println("DIAGNOSTIC REFUSED: " + result.status().label() + ": "
-                    + result.message());
-            err.println("DIAGNOSTIC no input was sent; this invocation is over"
-                    + " and nothing is retried automatically");
+        if (result.sent()) {
+            out.println("DIAGNOSTIC SENT exactly one " + options.control() + " tap to pinned "
+                    + options.targetExecutable() + " target");
+            out.println("DIAGNOSTIC no further input will be sent");
+            out.println("DIAGNOSTIC diagnostic complete");
+            return EXIT_OK;
+        }
+        if (result.inputAttempted()) {
+            // Never claim zero input here: the one tap was attempted and may have been partially
+            // delivered, so the operator must treat the key as potentially delivered.
+            err.println("DIAGNOSTIC " + result.status().label() + ": " + result.message());
+            err.println("DIAGNOSTIC one tap was attempted but complete delivery was not"
+                    + " confirmed; partial native input may have been delivered;"
+                    + " no retry and no second tap will be attempted");
+            err.println("DIAGNOSTIC treat the attempted key as potentially delivered and check"
+                    + " the current GTA state before any later manual attempt");
             return EXIT_REFUSED;
         }
-        out.println("DIAGNOSTIC SENT exactly one " + options.control() + " tap to pinned "
-                + options.targetExecutable() + " target");
-        out.println("DIAGNOSTIC no further input will be sent");
-        out.println("DIAGNOSTIC diagnostic complete");
-        return EXIT_OK;
+        // Every remaining status is a pre-tap refusal, so zero input is guaranteed here.
+        err.println("DIAGNOSTIC REFUSED: " + result.status().label() + ": " + result.message());
+        err.println("DIAGNOSTIC no input was sent; this invocation is over"
+                + " and nothing is retried automatically");
+        return EXIT_REFUSED;
     }
 
-    /** Builds the production Windows backends, the project's only SendInput construction site. */
+    /** Builds the production Windows backends: the diagnostic's only native input site. */
     static Backends productionBackends() {
         return new Backends(new WindowsSendInputSink(), new WindowsForegroundTargetGuard(),
                 new WindowsEmergencyAbort());

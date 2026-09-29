@@ -1,14 +1,18 @@
 package io.github.bohdankordon.casinofingerprint.app;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.bohdankordon.casinofingerprint.execution.FakeAbortSignal;
 import io.github.bohdankordon.casinofingerprint.execution.FakeForegroundTargetGuard;
 import io.github.bohdankordon.casinofingerprint.execution.FakeGameInputSink;
+import io.github.bohdankordon.casinofingerprint.input.GameControl;
 import java.io.ByteArrayOutputStream;
 import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
+import java.util.List;
+import java.util.function.Consumer;
 import java.util.function.Supplier;
 import org.junit.jupiter.api.Test;
 
@@ -94,6 +98,84 @@ class InputDiagnosticMainTest {
         assertTrue(streams.errText().contains("DIAGNOSTIC REFUSED: TARGET NOT FOREGROUND"),
                 "Refusal label: " + streams.errText());
         assertTrue(backends.sink.taps().isEmpty(), "Zero taps");
+    }
+
+    @Test
+    void inputErrorNeverClaimsZeroInputAndStatesTheUncertainDelivery() {
+        Backends backends = new Backends();
+        backends.sink.refuseAtIndex(0);
+        Streams streams = new Streams();
+        int exit = InputDiagnosticMain.run(options("UP"), streams.out, streams.err, () -> true,
+                new FakeInputDiagnosticSleeper(), backends);
+        assertEquals(3, exit, "Exit code");
+        String err = streams.errText();
+        assertTrue(err.contains("DIAGNOSTIC INPUT ERROR"), "Input-error label: " + err);
+        assertFalse(err.contains("no input was sent"), "Never claims zero input: " + err);
+        assertTrue(err.contains("attempted"), "States the attempt: " + err);
+        assertTrue(err.contains("not confirmed"), "States unconfirmed delivery: " + err);
+        assertTrue(err.contains("partial"), "States possible partial delivery: " + err);
+        assertTrue(err.contains("no retry"), "States that nothing is retried: " + err);
+        assertTrue(err.contains("no second tap"), "States that no second tap follows: " + err);
+        assertTrue(streams.outText().contains("DIAGNOSTIC INPUT ARMED"),
+                "The armed banner was printed before the tap");
+        assertEquals(List.of(GameControl.UP), backends.sink.attempts(),
+                "Exactly one sink invocation, no retry");
+        assertTrue(backends.sink.taps().isEmpty(), "No complete tap was recorded");
+    }
+
+    @Test
+    void everyPreTapRefusalGuaranteesZeroInput() {
+        Outcome aborted = runOnWindows(backends -> backends.abort = FakeAbortSignal.immediate());
+        assertEquals(3, aborted.exit(), "Exit code");
+        assertTrue(aborted.err().contains("DIAGNOSTIC REFUSED: ABORTED"), aborted.err());
+        assertTrue(aborted.err().contains("no input was sent"), aborted.err());
+        assertTrue(aborted.backends().sink.attempts().isEmpty(), "ABORTED: zero tap attempts");
+
+        Outcome notForeground =
+                runOnWindows(backends -> backends.guard = FakeForegroundTargetGuard.missing());
+        assertEquals(3, notForeground.exit(), "Exit code");
+        assertTrue(notForeground.err().contains("DIAGNOSTIC REFUSED: TARGET NOT FOREGROUND"),
+                notForeground.err());
+        assertTrue(notForeground.err().contains("no input was sent"), notForeground.err());
+        assertTrue(notForeground.backends().sink.attempts().isEmpty(),
+                "TARGET NOT FOREGROUND: zero tap attempts");
+
+        Outcome focusLost = runOnWindows(backends -> backends.guard.scriptPinned(false));
+        assertEquals(3, focusLost.exit(), "Exit code");
+        assertTrue(focusLost.err().contains("DIAGNOSTIC REFUSED: FOCUS LOST"), focusLost.err());
+        assertTrue(focusLost.err().contains("no input was sent"), focusLost.err());
+        assertTrue(focusLost.backends().sink.attempts().isEmpty(),
+                "FOCUS LOST: zero tap attempts");
+
+        Outcome nonWindows = run(false, backends -> { });
+        assertEquals(3, nonWindows.exit(), "Exit code");
+        assertTrue(nonWindows.err().contains("NON-WINDOWS"), nonWindows.err());
+        assertTrue(nonWindows.err().contains("no native input backend was constructed"),
+                "The strongest zero-input proof: no backend exists at all: " + nonWindows.err());
+        assertEquals(0, nonWindows.backends().calls,
+                "The Windows gate refuses before any backend is constructed");
+        assertTrue(nonWindows.backends().sink.attempts().isEmpty(),
+                "NON-WINDOWS: zero tap attempts");
+    }
+
+    /** One scenario outcome: exit code, captured streams and the fake backend set. */
+    private record Outcome(int exit, Streams streams, Backends backends) {
+        String err() {
+            return streams.errText();
+        }
+    }
+
+    private static Outcome runOnWindows(Consumer<Backends> scenario) {
+        return run(true, scenario);
+    }
+
+    private static Outcome run(boolean windows, Consumer<Backends> scenario) {
+        Backends backends = new Backends();
+        scenario.accept(backends);
+        Streams streams = new Streams();
+        int exit = InputDiagnosticMain.run(options("UP"), streams.out, streams.err,
+                () -> windows, new FakeInputDiagnosticSleeper(), backends);
+        return new Outcome(exit, streams, backends);
     }
 
     private static InputDiagnosticOptions options(String control) {

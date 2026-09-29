@@ -183,4 +183,41 @@ class InputDiagnosticOptionsTest {
         assertTrue(usage.contains("PROCEED/Tab is"), "Forbidden control");
         assertTrue(usage.contains("AT MOST"), "One-tap promise");
     }
+
+    @Test
+    void parserRefusalsGuaranteeZeroInputBecauseNoTapCanBeReached() {
+        IllegalArgumentException disabled = assertThrows(IllegalArgumentException.class,
+                () -> InputDiagnosticOptions.parse(
+                        new String[] {"--target-exe", "GTA5.exe", "--control", "UP"}));
+        assertTrue(disabled.getMessage().contains("INPUT DISABLED"), disabled.getMessage());
+        assertTrue(disabled.getMessage().contains("never sends input by default"),
+                disabled.getMessage());
+        assertTrue(InputDiagnosticStatus.INPUT_DISABLED.zeroInputGuaranteed(),
+                "INPUT DISABLED is a pre-tap refusal");
+        assertTrue(InputDiagnosticOptions.usage().contains("without it nothing is sent"),
+                "The usage printed with the refusal states the zero-input default");
+
+        IllegalArgumentException proceed = assertThrows(IllegalArgumentException.class,
+                () -> InputDiagnosticOptions.parse(new String[] {"--enable-input",
+                        "--target-exe", "GTA5.exe", "--control", "PROCEED"}));
+        assertTrue(proceed.getMessage().contains("UNSUPPORTED CONTROL"), proceed.getMessage());
+        assertTrue(proceed.getMessage().contains("Tab is never sent"), proceed.getMessage());
+        assertTrue(InputDiagnosticStatus.UNSUPPORTED_CONTROL.zeroInputGuaranteed(),
+                "UNSUPPORTED CONTROL is a pre-tap refusal");
+
+        IllegalArgumentException unknown = assertThrows(IllegalArgumentException.class,
+                () -> InputDiagnosticOptions.parse(new String[] {"--enable-input",
+                        "--target-exe", "GTA5.exe", "--control", "SPACE"}));
+        assertTrue(unknown.getMessage().contains("UNSUPPORTED CONTROL"), unknown.getMessage());
+    }
+
+    @Test
+    void usageDocumentsExitCodesWithoutPromisingZeroInputForInputErrors() {
+        String usage = InputDiagnosticOptions.usage();
+        assertTrue(usage.contains("3 runtime refusal or input failure"), usage);
+        assertFalse(usage.contains("3 refused with zero input"),
+                "Exit code 3 no longer means zero input by itself: " + usage);
+        assertTrue(usage.contains("INPUT ERROR"), "Names the after-tap failure: " + usage);
+        assertTrue(usage.contains("does not confirm complete delivery"), usage);
+    }
 }

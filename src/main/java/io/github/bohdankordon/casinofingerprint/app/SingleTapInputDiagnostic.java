@@ -33,6 +33,12 @@ import java.util.function.BooleanSupplier;
  *   <li>tap exactly once and return; no retry, no second tap.</li>
  * </ol>
  * Nothing sleeps after the final gate checks.
+ *
+ * <p>A tap that throws {@link GameInputException} is reported as
+ * {@link InputDiagnosticStatus#INPUT_ERROR} and is never retried. That status is NOT a claim of
+ * zero input: the attempt already reached the backend, so a partially delivered native batch may
+ * have delivered a real key event, and the backend's existing best-effort key-up cleanup
+ * applies. Only the pre-tap refusals guarantee zero input.
  */
 public final class SingleTapInputDiagnostic {
     /** Modest F12 poll interval used throughout the countdown. */
@@ -64,8 +70,11 @@ public final class SingleTapInputDiagnostic {
      * Runs the ordered gates and at most one tap.
      *
      * @param request the single explicitly requested tap
-     * @return the terminal result of this invocation; input was sent exactly when
-     *         {@link InputDiagnosticResult#sent()} is true
+     * @return the terminal result of this invocation; a complete tap was confirmed exactly when
+     *         {@link InputDiagnosticResult#sent()} is true, while
+     *         {@link InputDiagnosticResult#inputAttempted()} additionally covers the
+     *         {@link InputDiagnosticStatus#INPUT_ERROR} case where the one attempt was made but
+     *         complete delivery was not confirmed
      */
     public InputDiagnosticResult run(InputDiagnosticRequest request) {
         Objects.requireNonNull(request, "request");
@@ -124,13 +133,18 @@ public final class SingleTapInputDiagnostic {
             return refusal(InputDiagnosticStatus.ABORTED,
                     "F12 is active: no input was sent and the invocation is over");
         }
-        // 11. exactly one tap, no retry, no second tap.
+        // 11. exactly one tap, no retry, no second tap. A failure here is reported as
+        // INPUT_ERROR, which must never be described as "no input was sent": the attempt
+        // already reached the backend and a partial native batch may have been delivered.
         try {
             sink.tap(request.control());
         } catch (GameInputException e) {
             return refusal(InputDiagnosticStatus.INPUT_ERROR,
                     "the tap backend failed (" + e.getMessage()
-                            + "): the tap was not retried and no second tap was attempted");
+                            + "): one tap was attempted and complete delivery was not confirmed,"
+                            + " so partial native input may have been delivered (the backend's"
+                            + " best-effort key-up cleanup, if any, already ran); the attempt is"
+                            + " never retried and no second tap is attempted");
         }
         return new InputDiagnosticResult(InputDiagnosticStatus.SENT,
                 "exactly one " + request.control() + " tap was submitted to the pinned "
