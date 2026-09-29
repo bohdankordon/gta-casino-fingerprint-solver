@@ -289,4 +289,12 @@ live-game reliability with controlled GTA end-to-end testing.
      separate opt-in live CLI, 47/47 real-recording control-state evaluation, unchanged
      Stage 7A and witness replays; production 2560x1440 on Windows only; no live-game
      reliability claimed)
-8. Possible later stage - controlled live GTA end-to-end testing (Stage 8)
+8. Stage 8 - controlled live GTA end-to-end testing (in progress)
+   - Stage 8B - real-GTA Borderless capture validation (complete: 2560x1440 physical,
+     CV_8UC3, 282 continuous frames, 0 unsupported frames, 0 capture errors, 43.4 ms
+     average warmed capture; no Windows Graphics Capture / Desktop Duplication backend
+     is needed)
+   - Stage 8C - guarded single-tap input diagnostics (implementation pending manual
+     validation: the guarded one-tap CLI documented in
+     docs/stage8c-input-diagnostics.md; not complete and not yet validated against
+     real GTA)
