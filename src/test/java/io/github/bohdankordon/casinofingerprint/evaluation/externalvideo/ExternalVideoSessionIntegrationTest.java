@@ -118,11 +118,18 @@ class ExternalVideoSessionIntegrationTest {
         assertTrue(report.contains("NEEDS_REVIEW_FINAL_EXIT"));
         assertTrue(report.contains("FP1 1"), "predicted FP distribution: " + report);
         Path crops = sessionDir.resolve("crops");
-        assertTrue(Files.isRegularFile(crops.resolve("round-001-start.png")));
-        assertTrue(Files.isRegularFile(crops.resolve("round-001-prediction.png")));
-        assertTrue(Files.isRegularFile(crops.resolve("round-001-final-four.png")));
+        assertTrue(Files.isRegularFile(crops.resolve("round-001-start-01.png")));
         assertTrue(Files.isRegularFile(
-                sessionDir.resolve("screenshots/round-001-prediction-full.png")));
+                sessionDir.resolve("screenshots/round-001-start-01-full.png")),
+                "puzzle-present START keeps the full frame");
+        assertTrue(Files.isRegularFile(crops.resolve("round-001-target-start-01.png")),
+                "puzzle-present START keeps the target crop");
+        assertTrue(Files.isRegularFile(crops.resolve("round-001-c0-start-01.png")),
+                "puzzle-present START keeps the C0..C7 crops");
+        assertTrue(Files.isRegularFile(crops.resolve("round-001-prediction-01.png")));
+        assertTrue(Files.isRegularFile(crops.resolve("round-001-final-four-01.png")));
+        assertTrue(Files.isRegularFile(
+                sessionDir.resolve("screenshots/round-001-prediction-01-full.png")));
         String terminal = outBytes.toString(StandardCharsets.UTF_8);
         assertTrue(terminal.contains("ROUND 1"), "terminal round: " + terminal);
         assertTrue(terminal.contains("prediction FP_1"), "terminal prediction: " + terminal);
@@ -196,10 +203,10 @@ class ExternalVideoSessionIntegrationTest {
                         () -> clock.addAndGet(100L));
                 runner.stepOnce();
                 Path crops = sessionDir.resolve("crops");
-                assertTrue(Files.isRegularFile(crops.resolve("round-001-transition.png")),
+                assertTrue(Files.isRegularFile(crops.resolve("round-001-transition-01.png")),
                         "transition keyframe is saved on NEW_ROUND_TRANSITION");
                 assertTrue(Files.isRegularFile(
-                        sessionDir.resolve("screenshots/round-001-transition-full.png")),
+                        sessionDir.resolve("screenshots/round-001-transition-01-full.png")),
                         "transition full frame is saved");
             }
         }
@@ -247,7 +254,7 @@ class ExternalVideoSessionIntegrationTest {
                         () -> clock.addAndGet(100L));
                 runner.stepOnce();
                 Path crops = sessionDir.resolve("crops");
-                assertTrue(Files.isRegularFile(crops.resolve("round-001-ambiguous.png")),
+                assertTrue(Files.isRegularFile(crops.resolve("round-001-ambiguous-01.png")),
                         "ambiguous boundary evidence is saved for manual review");
             }
         }
