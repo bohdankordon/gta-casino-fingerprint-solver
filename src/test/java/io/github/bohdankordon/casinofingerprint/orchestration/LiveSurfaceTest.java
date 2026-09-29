@@ -130,9 +130,12 @@ class LiveSurfaceTest {
                 String relative =
                         root.relativize(file).toString().replace(java.io.File.separatorChar, '/');
                 if (relative.startsWith("input/win32/")
-                        || relative.equals("app/LiveSolverMain.java")) {
-                    // win32 holds the native calls; the live CLI only names those backend
-                    // classes (pinned by liveCliReachesInputOnlyThroughWin32Backends).
+                        || relative.equals("app/LiveSolverMain.java")
+                        || relative.equals("app/InputDiagnosticMain.java")) {
+                    // win32 holds the native calls; the CLIs that wire the guarded live
+                    // path and the Stage 8C.1 single-tap diagnostic only name those
+                    // backend classes, pinned by liveCliReachesInputOnlyThroughWin32Backends
+                    // and by the Stage 8C.1 input-diagnostic isolation test.
                     continue;
                 }
                 String text = Files.readString(file, StandardCharsets.UTF_8);
