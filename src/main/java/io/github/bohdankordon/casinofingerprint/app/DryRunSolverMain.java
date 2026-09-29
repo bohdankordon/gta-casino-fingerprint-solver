@@ -34,6 +34,8 @@ import org.bytedeco.opencv.opencv_core.Mat;
  * </pre>
  *
  * <p>Every line this program prints is labelled DRY RUN. When a round becomes ready it prints
+ * <p>Every runtime line this program prints (past argument parsing) is labelled DRY RUN.
+ * When a round becomes ready it prints
  * the one concise abstract plan it WOULD execute later (navigation intentions, SELECT markers,
  * one final PROCEED marker) and sends nothing: there is no keyboard path, no mouse path and
  * no native input call anywhere behind this CLI. The existing {@link LiveRecognitionMain}
@@ -70,7 +72,7 @@ public final class DryRunSolverMain {
             exit = run(options, System.out, System.err, monitors, AwtScreenCapture::forMonitor,
                     Path.of(System.getProperty("user.dir")));
         } catch (CaptureException e) {
-            System.err.println("CAPTURE_ERROR: " + e.getMessage());
+            System.err.println("DRY RUN: CAPTURE_ERROR: " + e.getMessage());
             exit = EXIT_FAILURE;
         }
         if (exit != EXIT_OK) {
@@ -92,7 +94,7 @@ public final class DryRunSolverMain {
         try {
             layout = GameplayLayout.representative(projectRoot.resolve(GameplayFixture.LAYOUT_REL));
         } catch (IOException | IllegalArgumentException e) {
-            err.println("SETUP_ERROR: could not read the gameplay layout: " + e.getMessage());
+            err.println("DRY RUN: SETUP_ERROR: could not read the gameplay layout: " + e.getMessage());
             return EXIT_FAILURE;
         }
         Resolution required = new Resolution(layout.sourceWidth(), layout.sourceHeight());
@@ -100,7 +102,7 @@ public final class DryRunSolverMain {
         try {
             detected = monitors.enumerate();
         } catch (CaptureException e) {
-            err.println("CAPTURE_ERROR: " + e.getMessage());
+            err.println("DRY RUN: CAPTURE_ERROR: " + e.getMessage());
             return EXIT_FAILURE;
         }
         if (options.mode() == DryRunSolverOptions.Mode.LIST_MONITORS) {
@@ -111,26 +113,26 @@ public final class DryRunSolverMain {
         try {
             monitor = MonitorSelector.resolve(detected, options.monitorIndex(), required);
         } catch (CaptureException e) {
-            err.println("CAPTURE_ERROR: " + e.getMessage());
+            err.println("DRY RUN: CAPTURE_ERROR: " + e.getMessage());
             return EXIT_FAILURE;
         }
-        out.println("layout  : " + GameplayFixture.LAYOUT_REL + " -> physical " + required);
-        out.println("monitor : " + monitor.describe());
+        out.println("DRY RUN: layout  : " + GameplayFixture.LAYOUT_REL + " -> physical " + required);
+        out.println("DRY RUN: monitor : " + monitor.describe());
         ReferenceFingerprintLibrary library;
         try {
             library = ReferenceFingerprintLibrary.load(projectRoot);
         } catch (IOException | IllegalArgumentException | IllegalStateException e) {
-            err.println("SETUP_ERROR: could not load the reference library: " + e.getMessage());
+            err.println("DRY RUN: SETUP_ERROR: could not load the reference library: " + e.getMessage());
             return EXIT_FAILURE;
         }
         try (library) {
             FrameRecognitionPipeline pipeline = new FrameRecognitionPipeline(layout, library);
             try (DryRunSolveOrchestrator orchestrator = new DryRunSolveOrchestrator(pipeline,
                     NavigationContext.characterized(), options.stableFrames())) {
-                return runWatch(captures.create(monitor, required), orchestrator, options, out, err);
+            return runWatch(captures.create(monitor, required), orchestrator, options, out, err);
             }
         } catch (CaptureException e) {
-            err.println("CAPTURE_ERROR: " + e.getMessage());
+            err.println("DRY RUN: CAPTURE_ERROR: " + e.getMessage());
             return EXIT_FAILURE;
         }
     }

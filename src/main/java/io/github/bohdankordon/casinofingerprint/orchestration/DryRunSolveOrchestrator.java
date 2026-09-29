@@ -2,6 +2,8 @@ package io.github.bohdankordon.casinofingerprint.orchestration;
 
 import io.github.bohdankordon.casinofingerprint.navigation.DryRunPlan;
 import io.github.bohdankordon.casinofingerprint.navigation.DryRunPlanner;
+import io.github.bohdankordon.casinofingerprint.navigation.GridNavigationPolicy;
+import io.github.bohdankordon.casinofingerprint.navigation.PlanValidator;
 import io.github.bohdankordon.casinofingerprint.runtime.FrameRecognitionObservation;
 import io.github.bohdankordon.casinofingerprint.runtime.FrameRecognitionPipeline;
 import io.github.bohdankordon.casinofingerprint.runtime.LiveRecognitionStatus;
@@ -11,6 +13,8 @@ import io.github.bohdankordon.casinofingerprint.runtime.RoundLifecycleState;
 import io.github.bohdankordon.casinofingerprint.runtime.RoundLifecycleStatus;
 import io.github.bohdankordon.casinofingerprint.runtime.RoundLifecycleWitnessCoordinator;
 import io.github.bohdankordon.casinofingerprint.runtime.UnsupportedFrameSizeException;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import org.bytedeco.opencv.opencv_core.Mat;
@@ -141,15 +145,16 @@ public final class DryRunSolveOrchestrator implements AutoCloseable {
                 return new DryRunFrameResult(lifecycle, null, null,
                         "lifecycle reported NEW_ROUND_READY without a ready identity");
             }
-            DryRunPlan plan = DryRunPlanner.plan(ready.get(), navigation);
-            if (!plan.executable()) {
-                return new DryRunFrameResult(lifecycle, plan, null, null);
+            DryRunPlan checked = requireValid(DryRunPlanner.plan(ready.get(), navigation),
+                    navigation.policy());
+            if (!checked.executable()) {
+                return new DryRunFrameResult(lifecycle, checked, null, null);
             }
             try {
                 RecognitionIdentity consumed = coordinator.consumeReadyRound(owned);
-                return new DryRunFrameResult(lifecycle, plan, consumed, null);
+                return new DryRunFrameResult(lifecycle, checked, consumed, null);
             } catch (RuntimeException e) {
-                return new DryRunFrameResult(lifecycle, plan, null,
+                return new DryRunFrameResult(lifecycle, checked, null,
                         "dry-run consume failed: " + e.getMessage());
             }
         }
@@ -177,6 +182,32 @@ public final class DryRunSolveOrchestrator implements AutoCloseable {
         consensus.reset();
         coordinator.reset();
         lastStatus = LiveRecognitionStatus.waiting();
+    }
+
+    /**
+     * Fail-closed consumption gate: an executable plan is independently re-validated, and
+     * any violation converts it to a BLOCKED result naming the failure. Package-private
+     * for tests, so the consumption gate is pinned without test-only dependency injection.
+     *
+     * <p>The production fact this pins down: {@code consumeReadyRound} above is reachable
+     * only after {@code PlanValidator} reports no violations, so no invalid plan is ever
+     * lifecycle-consumed. A converted plan leaves the round ROUND_READY: nothing is reset,
+     * nothing is cleared, nothing is silently skipped.
+     */
+    static DryRunPlan requireValid(DryRunPlan plan, GridNavigationPolicy policy) {
+        Objects.requireNonNull(plan, "plan");
+        Objects.requireNonNull(policy, "policy");
+        if (!plan.executable()) {
+            return plan;
+        }
+        List<String> violations = PlanValidator.validate(plan, policy);
+        if (violations.isEmpty()) {
+            return plan;
+        }
+        List<String> reasons = new ArrayList<>();
+        reasons.add("planner validation failed for " + plan.identity().code());
+        reasons.addAll(violations);
+        return DryRunPlan.blocked(plan.identity(), reasons);
     }
 
     /** Releases the witness baseline. Idempotent. */

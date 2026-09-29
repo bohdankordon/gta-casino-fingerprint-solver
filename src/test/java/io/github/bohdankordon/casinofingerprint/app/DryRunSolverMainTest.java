@@ -66,6 +66,23 @@ class DryRunSolverMainTest {
     }
 
     @Test
+    void watchSetupFailuresAreLabelledDryRun() {
+        DryRunSolverOptions options = DryRunSolverOptions.parse(new String[] {"--watch"});
+        RecordingFactory factory = new RecordingFactory(FakeScreenCapture.create());
+        ByteArrayOutputStream outBytes = new ByteArrayOutputStream();
+        PrintStream out = new PrintStream(outBytes, true, StandardCharsets.UTF_8);
+        ByteArrayOutputStream errBytes = new ByteArrayOutputStream();
+        PrintStream err = new PrintStream(errBytes, true, StandardCharsets.UTF_8);
+        Path missingRoot = Stage5TestSupport.PROJECT_ROOT.resolve("no-such-project-root-7a");
+        int exit = DryRunSolverMain.run(options, out, err,
+                () -> List.of(SCALED_TARGET), factory, missingRoot);
+        assertEquals(3, exit, "Exit code");
+        String error = errBytes.toString(StandardCharsets.UTF_8);
+        assertTrue(error.contains("DRY RUN: SETUP_ERROR"), "Labelled setup error: " + error);
+        assertEquals(0, factory.created(), "No capture is created");
+    }
+
+    @Test
     void readyPlanPrintsOneConciseDryRunBlock() {
         RecognitionIdentity identity =
                 RecognitionIdentity.of(FingerprintId.FP_4, List.of(1, 4, 5, 6));

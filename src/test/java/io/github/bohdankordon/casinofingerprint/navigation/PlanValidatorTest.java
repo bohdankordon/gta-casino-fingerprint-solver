@@ -138,4 +138,30 @@ class PlanValidatorTest {
                 GRAPH).size(),
                 "hand-built C0,C6,C7,C1 tour validates");
     }
+
+    @Test
+    void planLevelValidationAcceptsPlannerOutput() {
+        DryRunPlan plan = realPlan();
+        assertTrue(PlanValidator.isValid(plan, GRAPH),
+                "whole valid plans validate: " + PlanValidator.validate(plan, GRAPH));
+    }
+
+    @Test
+    void planLevelValidationRejectsMovesOutsideTheGraph() {
+        DryRunPlan plan = realPlan();
+        List<String> violations =
+                PlanValidator.validate(plan, ProvenGridNavigationPolicy.empty());
+        assertTrue(violations.stream().anyMatch(v -> v.contains("illegal move")),
+                "every Navigate is unproven against an empty graph: " + violations);
+    }
+
+    @Test
+    void planLevelValidationRejectsBlockedPlans() {
+        DryRunPlan blocked = DryRunPlan.blocked(
+                RecognitionIdentity.of(FingerprintId.FP_3, List.of(1, 4, 5, 6)),
+                List.of("unknown selector start position"));
+        List<String> violations = PlanValidator.validate(blocked, GRAPH);
+        assertTrue(violations.stream().anyMatch(v -> v.contains("BLOCKED")),
+                "blocked plans have nothing executable to check: " + violations);
+    }
 }

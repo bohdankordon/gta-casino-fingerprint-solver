@@ -2,9 +2,11 @@ package io.github.bohdankordon.casinofingerprint.navigation;
 
 import io.github.bohdankordon.casinofingerprint.runtime.RecognitionIdentity;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
+import java.util.Set;
 
 /**
  * Immutable dry-run outcome for one validated ROUND_READY identity: either an executable
@@ -59,12 +61,44 @@ public final class DryRunPlan {
         Objects.requireNonNull(start, "start");
         Objects.requireNonNull(order, "order");
         Objects.requireNonNull(actions, "actions");
-        if (order.size() != 4) {
-            throw new IllegalArgumentException("A ready plan selects four, got " + order.size());
+        if (navigationMoveCount < 0) {
+            throw new IllegalArgumentException(
+                    "A ready plan navigation move count must be non-negative, got "
+                            + navigationMoveCount);
         }
-        if (actions.isEmpty()
+        if (order.size() != 4 || new HashSet<>(order).size() != 4) {
+            throw new IllegalArgumentException(
+                    "A ready plan order holds exactly four distinct candidates, got " + order);
+        }
+        Set<Integer> identitySet = new HashSet<>(identity.candidates());
+        if (!new HashSet<>(order).equals(identitySet)) {
+            throw new IllegalArgumentException("A ready plan order " + order
+                    + " must equal the identity candidates " + identity.code());
+        }
+        List<Integer> selected = new ArrayList<>();
+        int navigates = 0;
+        int proceeds = 0;
+        for (DryRunAction action : actions) {
+            if (action instanceof DryRunAction.Navigate) {
+                navigates++;
+            } else if (action instanceof DryRunAction.Select select) {
+                selected.add(select.candidate().index());
+            } else if (action instanceof DryRunAction.Proceed) {
+                proceeds++;
+            }
+        }
+        if (!selected.equals(order)) {
+            throw new IllegalArgumentException("A ready plan SELECT sequence " + selected
+                    + " must equal the order " + order);
+        }
+        if (navigates != navigationMoveCount) {
+            throw new IllegalArgumentException("A ready plan navigates " + navigates
+                    + " times but reports " + navigationMoveCount + " moves");
+        }
+        if (proceeds != 1 || actions.isEmpty()
                 || !(actions.get(actions.size() - 1) instanceof DryRunAction.Proceed)) {
-            throw new IllegalArgumentException("A ready plan ends with exactly one PROCEED");
+            throw new IllegalArgumentException(
+                    "A ready plan holds exactly one PROCEED marker, last and alone at the end");
         }
         return new DryRunPlan(Status.READY, identity, start, List.copyOf(order),
                 List.copyOf(actions), navigationMoveCount, List.of());

@@ -171,6 +171,19 @@ selected set exactly the expected four; PROCEED only after all four selections, 
 last, with nothing after it. The real replay validates every emitted plan; CI feeds the
 validator both planner output (must pass) and six hand-built failure classes (must fail).
 
+The whole-plan overload `validate(DryRunPlan, GridNavigationPolicy)` additionally proves the
+READY metadata itself: start present; order of exactly four distinct indices equal to the
+identity set; exactly four SELECTs in order sequence; Navigate count equal to
+`navigationMoveCount` (non-negative); `actionCount` equal to the action list size; exactly
+one PROCEED. `DryRunPlan.ready(...)` rejects inconsistent metadata at construction (wrong
+order set, drifting SELECT sequence, wrong move count, missing/multiple/non-final PROCEED,
+negative moves); navigation legality stays the validators job because it needs the policy.
+
+Production consumption gate: the orchestrator re-validates every READY plan through the
+independent validator BEFORE `consumeReadyRound` is reachable. A violation converts the
+result to BLOCKED (`planner validation failed for ...` plus the violations) and the round
+stays pending. No invalid plan is ever lifecycle-consumed.
+
 ## Orchestrator call chain
 
 ```
@@ -180,8 +193,11 @@ DryRunSolveOrchestrator.onFrame(frame):
   lifecycle   = coordinator.accept(status, observation)
   if lifecycle.newRoundReady():
       plan = DryRunPlanner.plan(lifecycle.readyIdentity, navigationContext)
-      if plan.executable:
+      checked = requireValid(plan, navigationContext.policy) // independent re-validation
+      if checked.executable:
           coordinator.consumeReadyRound(observation) // SAME observation, re-arms baseline
+      // invalid plans convert to BLOCKED with "planner validation failed: ..." reasons and
+      // are never consumed: the round stays ROUND_READY, nothing is reset or cleared.
 ```
 
 Decision-free conditions (unsupported size, capture errors) take the existing no-observation
