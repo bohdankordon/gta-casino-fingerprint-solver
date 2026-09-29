@@ -99,6 +99,52 @@ class ExternalVideoSessionRunnerEvidenceTest {
     }
 
     @Test
+    void absentStartWritesPanelAndFullOnly(@TempDir Path temp) throws Exception {
+        GameplayLayout layout = Stage5TestSupport.representativeLayout();
+        Mat black = new Mat(layout.sourceHeight(), layout.sourceWidth(),
+                org.bytedeco.opencv.global.opencv_core.CV_8UC3, Scalar.BLACK);
+        ScreenCapture capture = () -> black.clone();
+        FrameControlReader controlReader = frame -> valid(0);
+        Path sessionDir = temp.resolve("abs-start-01");
+        Files.createDirectories(sessionDir.resolve("screenshots"));
+        Files.createDirectories(sessionDir.resolve("crops"));
+        AtomicLong clock = new AtomicLong();
+        ExternalObservedRoundTracker tracker = new ExternalObservedRoundTracker();
+        tracker.onObservation(0, ExternalPanelPresence.PRESENT, valid(0));
+        try (ReferenceFingerprintLibrary library = Stage5TestSupport.openLibrary()) {
+            FrameRecognitionPipeline pipeline = Stage5TestSupport.pipeline(library);
+            try (DryRunSolveOrchestrator orchestrator =
+                    new DryRunSolveOrchestrator(pipeline, NavigationContext.characterized())) {
+                ExternalVideoSessionRunner runner = new ExternalVideoSessionRunner(capture,
+                        controlReader, orchestrator, tracker, layout, sessionDir, "abs-start-01",
+                        "abs-start",
+                        new PrintStream(new ByteArrayOutputStream(), true, StandardCharsets.UTF_8),
+                        new PrintStream(new ByteArrayOutputStream(), true, StandardCharsets.UTF_8),
+                        () -> clock.addAndGet(100L));
+                runner.stepOnce();
+                Path crops = sessionDir.resolve("crops");
+                Path shots = sessionDir.resolve("screenshots");
+                assertTrue(Files.isRegularFile(crops.resolve("round-001-start-01.png")),
+                        "START panel evidence preserved on absent frames");
+                assertTrue(Files.isRegularFile(shots.resolve("round-001-start-01-full.png")),
+                        "START full frame preserved on absent frames");
+                boolean startTarget = Files.list(crops).anyMatch(p -> {
+                    String name = p.getFileName().toString();
+                    return name.contains("start") && name.contains("target");
+                });
+                assertFalse(startTarget, "absent frames write no START target crops");
+                boolean startCandidate = Files.list(crops).anyMatch(p -> {
+                    String name = p.getFileName().toString();
+                    return name.contains("start") && name.matches(".*-c[0-7]-.*");
+                });
+                assertFalse(startCandidate, "absent frames write no START candidate crops");
+                runner.finalizeSession();
+            }
+        }
+        black.close();
+    }
+
+    @Test
     void absentTransitionWritesFullPlusPanelOnly(@TempDir Path temp) throws Exception {
         GameplayLayout layout = Stage5TestSupport.representativeLayout();
         Mat black = new Mat(layout.sourceHeight(), layout.sourceWidth(),

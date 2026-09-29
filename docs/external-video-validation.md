@@ -85,14 +85,24 @@ other non-puzzle pixels.
 
 After a first four-set, the set freezes as the candidate successful attempt. A clear
 immediately after four does not eagerly fail it: the round enters FOUR_SELECTED_PENDING
-and waits for either a genuine same-puzzle retry (panel continuously PRESENT, new
-selection sequence proving the same puzzle continues, previous four kept as failed)
-or a credible structural next-round transition (previous four confirmed, next round
-seeded). A panel ABSENT gap after four proves the panel left: post-puzzle ROI readings
-are ignored, the frozen four survives, and a later credible transition confirms it.
-Direct cuts with no sampled absent frame stay pending; fast next-round input before
-recognition re-stabilizes does not convert the frozen four into a failure unless the
-same puzzle is proven. Anything indistinguishable fail-closes to NEEDS_REVIEW_AMBIGUOUS.
+and waits for either a genuine same-puzzle retry or a credible structural next-round
+transition (previous four confirmed, next round seeded). A retry is only ever proven by
+evidence independent of the solver answer: the frozen four shrinks to a proper subset
+while the panel stays PRESENT (a control/ERROR ambiguity may surround it), then regrows
+monotonically from that subset. Solver equality can never prove a retry, because a
+prediction cannot adjudicate its own benchmark ground truth. A panel ABSENT gap after
+four proves the panel left: post-puzzle ROI readings are ignored, the frozen four
+survives, and a later credible transition confirms it.
+
+Direct cuts with no sampled absent frame stay pending, and fast next-round input before a
+credible boundary latches the round ambiguous: a new selection or four-set appearing
+after the previous four with no absent gap and no independent same-puzzle proof. Once
+latched, the ambiguity survives every later four-set: later selections and four-sets stay
+diagnostic evidence, never success proof. At the next credible NEW_ROUND_READY the merged
+round fail-closes to NEEDS_REVIEW_AMBIGUOUS with `observedSuccess = null` and every
+attempt, note and event preserved; a NEW_ROUND_READY that carries a prediction still
+seeds it as the next tracked round, so the video keeps being watched. Anything
+indistinguishable fail-closes to NEEDS_REVIEW_AMBIGUOUS.
 
 The only automatic ground truth is a human four-set followed by a genuine structural
 next-round transition (the production lifecycle NEW_ROUND_READY, including witnessed
@@ -113,6 +123,11 @@ subsequent-round event may automatically confirm the previous four-set. In parti
   first prediction staying primary, and the round fail-closes unless independent
   subsequent evidence (the old four-set leaving the display plus a later credible
   transition) establishes the boundary;
+- an ambiguous boundary is a latch: once set, later selections and four-sets remain
+  diagnostic evidence, no later event may auto-confirm the round (not even one whose
+  four-set equals the solver prediction), and the next credible NEW_ROUND_READY
+  fail-closes the merged round to NEEDS_REVIEW_AMBIGUOUS while seeding the incoming
+  prediction as the next tracked round;
 - a clean next-round prediction ordinarily arrives after the new empty/C0 state is
   visible, because the control stream leads recognition re-stabilization;
 - NO_PREDICTION is conservative: a human round that never received a prediction is only
@@ -156,18 +171,22 @@ truth (see the report's predicted-FP-distribution note).
 
 Everything lands below ignored `target/stage8a/<session>/` and is never committed:
 
-- `screenshots/` - full frames at prediction, final-four, transition, ambiguous, and
-  panel-presence moments (occurrence-indexed, for example
+- `screenshots/` - full frames at round start, prediction, final-four, transition,
+  ambiguous, and panel-presence moments (occurrence-indexed, for example
   `round-002-final-four-01-full.png`);
 - `crops/` - panel, target and candidate crops for every key moment
   (`round-001-start-01.png`, `round-001-prediction-01.png`,
   `round-001-final-four-01.png`, `round-001-transition-01.png`, plus target/candidate
-  crops with the same occurrence suffix). Repeated moments never overwrite: the second
-  final-four becomes `round-002-final-four-02.png`, and so do its full, target, and
-  candidate files. For panel-absent, panel-ambiguous, and transition frames, full plus
-  broad panel-area crops are always preserved, but target and C0..C7 crops are written
-  only when panel presence on that frame is PRESENT, so walls, HACK SUCCESS screens,
-  and characters never produce meaningless candidate crops. Nothing is ever deleted.
+  crops with the same occurrence suffix). A ROUND_START moment saves the panel crop,
+  the full frame and, only when that frame is PRESENT, the target and C0..C7 crops
+  (`round-001-target-start-01.png`, `round-001-c0-start-01.png`,
+  `screenshots/round-001-start-01-full.png`). Repeated moments never overwrite: the
+  second final-four becomes `round-002-final-four-02.png`, and so do its full, target,
+  and candidate files. For panel-absent, panel-ambiguous, and transition frames, full
+  plus broad panel-area crops are always preserved, but target and C0..C7 crops are
+  written only when panel presence on that frame is PRESENT, so walls, HACK SUCCESS
+  screens, and characters never produce meaningless candidate crops. Nothing is ever
+  deleted.
 - `rounds.csv` - one benchmark row per observed round;
 - `events.csv` - changed-only event history (ROUND_START, PREDICTION,
   SELECTION_CHANGE, ATTEMPT_RESET, FOUR_SELECTED, NEW_ROUND_TRANSITION, ROUND_CONFIRMED,
@@ -200,8 +219,9 @@ screens, gameplay, walls, and characters occasionally produced plausible selecte
 All six recognition predictions had matched the first real human four-sets. The source
 itself remains clean: uncropped fullscreen gameplay, no picture-in-picture, no facecam,
 six human rounds all solved correctly on the first attempt. The fix is the presence gate
-above plus the post-four freeze, pending retry logic, occurrence-indexed evidence, and
-present-only target/candidate crops. Old `youtube-clean-01` artifacts must not be
+above plus the post-four freeze, independently-evidenced retry logic, the ambiguous-
+boundary latch that keeps merged A/B history fail-closed, occurrence-indexed evidence,
+and present-only target/candidate crops. Old `youtube-clean-01` artifacts must not be
 rewritten or claimed as fixed: after review and merge, the user replays the same video
 as a fresh `youtube-clean-01-v2` session and compares. No v2 result is claimed here.
 

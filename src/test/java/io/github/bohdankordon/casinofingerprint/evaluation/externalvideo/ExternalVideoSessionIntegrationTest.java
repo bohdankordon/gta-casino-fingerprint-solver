@@ -119,6 +119,13 @@ class ExternalVideoSessionIntegrationTest {
         assertTrue(report.contains("FP1 1"), "predicted FP distribution: " + report);
         Path crops = sessionDir.resolve("crops");
         assertTrue(Files.isRegularFile(crops.resolve("round-001-start-01.png")));
+        assertTrue(Files.isRegularFile(
+                sessionDir.resolve("screenshots/round-001-start-01-full.png")),
+                "puzzle-present START keeps the full frame");
+        assertTrue(Files.isRegularFile(crops.resolve("round-001-target-start-01.png")),
+                "puzzle-present START keeps the target crop");
+        assertTrue(Files.isRegularFile(crops.resolve("round-001-c0-start-01.png")),
+                "puzzle-present START keeps the C0..C7 crops");
         assertTrue(Files.isRegularFile(crops.resolve("round-001-prediction-01.png")));
         assertTrue(Files.isRegularFile(crops.resolve("round-001-final-four-01.png")));
         assertTrue(Files.isRegularFile(

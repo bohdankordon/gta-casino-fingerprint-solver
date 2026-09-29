@@ -89,7 +89,7 @@ class ExternalObservedRoundTrackerPresenceTest {
     }
 
     @Test
-    void wrongFourClearRetryWhilePresentYieldsTwoAttempts() {
+    void sparseClearThenDifferentFourIsAmbiguousNotRetry() {
         ExternalObservedRoundTracker tracker = new ExternalObservedRoundTracker();
         tracker.onObservation(0, ExternalPanelPresence.PRESENT, empty(0));
         tracker.onPrediction(50, prediction(FP3_1367));
@@ -99,13 +99,18 @@ class ExternalObservedRoundTrackerPresenceTest {
         tracker.onNewRoundTransition(400, FP2_0247, false);
         List<ExternalObservedRound> rounds = tracker.closeSession(500);
         assertEquals(1, rounds.size());
-        assertEquals(ExternalRoundOutcome.MATCH, rounds.get(0).result());
-        assertEquals(2, rounds.get(0).attempts());
-        assertEquals(1, rounds.get(0).failedAttempts().size());
+        ExternalObservedRound round = rounds.get(0);
+        assertEquals(ExternalRoundOutcome.NEEDS_REVIEW_AMBIGUOUS, round.result(),
+                "four -> empty -> different four has no independent same-puzzle proof, and"
+                        + " the second four equals the solver prediction");
+        assertNull(round.observedSuccess(), "no observedSuccess may be manufactured");
+        assertEquals(0, eventCount(tracker, EventType.ROUND_CONFIRMED));
+        assertTrue(round.notes().contains("[0, 1, 2, 3]"),
+                "the earlier four stays visible as evidence: " + round.notes());
     }
 
     @Test
-    void wrongFourErrorClearRetryWhilePresentStillWorks() {
+    void controlAmbiguityThenClearThenDifferentFourStaysAmbiguous() {
         ExternalObservedRoundTracker tracker = new ExternalObservedRoundTracker();
         tracker.onObservation(0, ExternalPanelPresence.PRESENT, empty(0));
         tracker.onPrediction(50, prediction(FP3_1367));
@@ -115,8 +120,10 @@ class ExternalObservedRoundTrackerPresenceTest {
         tracker.onObservation(300, ExternalPanelPresence.PRESENT, selected(7, 1, 3, 6, 7));
         tracker.onNewRoundTransition(400, FP2_0247, false);
         List<ExternalObservedRound> rounds = tracker.closeSession(500);
-        assertEquals(ExternalRoundOutcome.MATCH, rounds.get(0).result());
-        assertEquals(2, rounds.get(0).attempts());
+        assertEquals(ExternalRoundOutcome.NEEDS_REVIEW_AMBIGUOUS, rounds.get(0).result(),
+                "no shrink/regrowth proof, so the second four can never become ground truth");
+        assertNull(rounds.get(0).observedSuccess());
+        assertEquals(0, eventCount(tracker, EventType.ROUND_CONFIRMED));
     }
 
     @Test

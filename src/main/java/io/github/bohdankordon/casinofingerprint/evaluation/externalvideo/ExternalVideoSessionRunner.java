@@ -247,7 +247,12 @@ public final class ExternalVideoSessionRunner {
             switch (event.type()) {
                 case ROUND_START -> {
                     out.println(String.format(Locale.ROOT, "%nROUND %d", event.round()));
-                    savePanelCrop(frame, event.round(), "start", nextOccurrence(event.round(), "start"));
+                    int occurrence = nextOccurrence(event.round(), "start");
+                    savePanelCrop(frame, event.round(), "start", occurrence);
+                    saveFullFrame(frame, event.round(), "start", occurrence);
+                    if (framePresence == ExternalPanelPresence.PRESENT) {
+                        saveTargetAndCandidates(frame, event.round(), "start", occurrence);
+                    }
                 }
                 case PREDICTION -> {
                     out.println("prediction " + event.prediction());

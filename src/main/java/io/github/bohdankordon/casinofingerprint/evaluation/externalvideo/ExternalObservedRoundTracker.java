@@ -39,6 +39,13 @@ import java.util.TreeSet;
  *   <li>a different prediction identity arriving while the old four-set is still visibly
  *       displayed never confirms by identity change alone: it is surfaced diagnostically
  *       and fail-closed.</li>
+ *   <li>an ambiguous boundary is a latch for automatic ground truth: once set, the round
+ *       keeps collecting diagnostic evidence (later selections and four-sets are recorded),
+ *       but no later structural transition may auto-confirm it, not even when the later
+ *       four-set equals the solver prediction, because solver output cannot adjudicate its
+ *       own benchmark ground truth. The round fail-closes to NEEDS_REVIEW_AMBIGUOUS at the
+ *       next credible lifecycle boundary or at session end, and the incoming prediction of
+ *       that boundary still seeds the next tracked round.</li>
  * </ul>
  *
  * <p>Production feeds one combined {@link #onDryRunEvent} call per frame that carried a
@@ -220,41 +227,20 @@ public final class ExternalObservedRoundTracker {
                 if (active.fourPending && active.lastFourSet != null
                         && !selected.equals(active.lastFourSet)) {
                     SortedSet<Integer> oldFour = new TreeSet<>(active.lastFourSet);
-                    boolean retryProven = active.prediction != null
-                            && new TreeSet<>(selected).equals(
-                                    new TreeSet<>(active.prediction.identity().candidates()))
-                            && !oldFour.equals(
-                                    new TreeSet<>(active.prediction.identity().candidates()));
-                    if (retryProven) {
-                        active.failedAttempts.add(oldFour);
-                        active.currentSelected.clear();
-                        active.currentSelected.addAll(selected);
-                        active.currentFocus = focus;
-                        active.lastFourSet = new TreeSet<>(selected);
-                        active.selectedAfterFour = false;
-                        active.fourPending = true;
-                        active.ambiguousBoundary = false;
-                        active.notes.append("retry ").append(formatSet(selected))
-                                .append(" replaces wrong ").append(formatSet(oldFour))
-                                .append(" at ").append(timestampMs).append("ms. ");
-                        log(timestampMs, active.roundNumber, EventType.ATTEMPT_RESET, focus,
-                                formatSet(selected), active.predictionCode(),
-                                "retry after clear: previous " + formatSet(oldFour)
-                                        + " kept as failed, retry is current");
-                        log(timestampMs, active.roundNumber, EventType.FOUR_SELECTED, focus,
-                                formatSet(selected), active.predictionCode(),
-                                "retry four selected; needs transition proof");
-                    } else {
-                        active.currentSelected.clear();
-                        active.currentSelected.addAll(selected);
-                        active.currentFocus = focus;
-                        active.selectedAfterFour = true;
-                        markAmbiguousBoundary(timestampMs,
-                                "new four " + formatSet(selected) + " after prior four "
-                                        + formatSet(oldFour)
-                                        + " with no absent gap; retry vs next-round early input"
-                                        + " indistinguishable, frozen preserved awaiting transition. ");
-                    }
+                    active.currentSelected.clear();
+                    active.currentSelected.addAll(selected);
+                    active.currentFocus = focus;
+                    active.selectedAfterFour = true;
+                    markAmbiguousBoundary(timestampMs,
+                            "new four " + formatSet(selected) + " after prior four "
+                                    + formatSet(oldFour)
+                                    + " with no absent gap; retry vs next-round early input"
+                                    + " indistinguishable without independent same-puzzle"
+                                    + " evidence, frozen preserved awaiting transition. ");
+                    log(timestampMs, active.roundNumber, EventType.FOUR_SELECTED, focus,
+                            formatSet(selected), active.predictionCode(),
+                            "four selected after an ambiguous boundary; kept as evidence,"
+                                    + " never success proof");
                 } else {
                     active.lastFourSet = new TreeSet<>(selected);
                     active.selectedAfterFour = false;
@@ -315,42 +301,21 @@ public final class ExternalObservedRoundTracker {
             if (active.lastFourSet != null && selected.size() == 4
                     && !selected.equals(active.lastFourSet)) {
                 SortedSet<Integer> oldFour = new TreeSet<>(active.lastFourSet);
-                boolean retryProven = active.prediction != null
-                        && new TreeSet<>(selected).equals(
-                                new TreeSet<>(active.prediction.identity().candidates()))
-                        && !oldFour.equals(
-                                new TreeSet<>(active.prediction.identity().candidates()));
-                if (retryProven) {
-                    active.failedAttempts.add(new TreeSet<>(previous));
-                    active.currentSelected.clear();
-                    active.currentSelected.addAll(selected);
-                    active.currentFocus = focus;
-                    active.lastFourSet = new TreeSet<>(selected);
-                    active.selectedAfterFour = false;
-                    active.fourPending = true;
-                    active.ambiguousBoundary = false;
-                    active.notes.append("retry ").append(formatSet(selected))
-                            .append(" replaces wrong ").append(formatSet(oldFour))
-                            .append(" at ").append(timestampMs).append("ms. ");
-                    log(timestampMs, active.roundNumber, EventType.ATTEMPT_RESET, focus,
-                            formatSet(selected), active.predictionCode(),
-                            "retry: previous " + formatSet(previous)
-                                    + " kept as failed, retry is current");
-                    log(timestampMs, active.roundNumber, EventType.FOUR_SELECTED, focus,
-                            formatSet(selected), active.predictionCode(),
-                            "retry four selected; needs transition proof");
-                } else {
-                    active.currentSelected.clear();
-                    active.currentSelected.addAll(selected);
-                    active.currentFocus = focus;
-                    active.selectedAfterFour = true;
-                    active.fourPending = true;
-                    markAmbiguousBoundary(timestampMs,
-                            "contradictory four " + formatSet(selected) + " after prior four "
-                                    + formatSet(oldFour)
-                                    + " with no absent gap; retry vs next-round early input"
-                                    + " indistinguishable, frozen preserved awaiting transition. ");
-                }
+                active.currentSelected.clear();
+                active.currentSelected.addAll(selected);
+                active.currentFocus = focus;
+                active.selectedAfterFour = true;
+                active.fourPending = true;
+                markAmbiguousBoundary(timestampMs,
+                        "contradictory four " + formatSet(selected) + " after prior four "
+                                + formatSet(oldFour)
+                                + " with no absent gap; retry vs next-round early input"
+                                + " indistinguishable without independent same-puzzle"
+                                + " evidence, frozen preserved awaiting transition. ");
+                log(timestampMs, active.roundNumber, EventType.FOUR_SELECTED, focus,
+                        formatSet(selected), active.predictionCode(),
+                        "four selected after an ambiguous boundary; kept as evidence,"
+                                + " never success proof");
             } else {
                 active.failedAttempts.add(previous);
                 active.currentSelected.clear();
@@ -452,8 +417,13 @@ public final class ExternalObservedRoundTracker {
         log(timestampMs, active.roundNumber, EventType.NEW_ROUND_TRANSITION,
                 active.currentFocus, formatSet(active.currentSelected),
                 readyIdentity == null ? "" : readyIdentity.code(),
-                "structural next-round transition; confirming previous four-set");
-        confirmActive(timestampMs, witnessUsed);
+                "structural next-round transition after prior four-set; automatic "
+                        + "confirmation gated by the attributed history");
+        confirmActiveOrFailClosed(timestampMs, witnessUsed, null,
+                "structural next-round transition"
+                        + (readyIdentity == null ? "" : " " + readyIdentity.code())
+                        + " after a latched ambiguous boundary; previous merged history "
+                        + "never becomes ground truth.");
     }
 
     /**
@@ -604,9 +574,13 @@ public final class ExternalObservedRoundTracker {
             log(timestampMs, active.roundNumber, EventType.NEW_ROUND_TRANSITION,
                     active.currentFocus, formatSet(active.currentSelected),
                     readyIdentity == null ? "" : readyIdentity.code(),
-                    "witnessed same-identity next-round transition; confirming previous, seeding next");
-            confirmActive(timestampMs, true);
-            seedNextRound(timestampMs, prediction);
+                    "witnessed same-identity next-round transition after prior four-set; "
+                            + "automatic confirmation gated by the attributed history");
+            confirmActiveOrFailClosed(timestampMs, true, prediction,
+                    "witnessed same-identity transition after a latched ambiguous boundary; "
+                            + "previous merged history never becomes ground truth; prediction "
+                            + prediction.identity().code()
+                            + " starts the next observed round for manual review.");
             return;
         }
         if (!newRoundReady) {
@@ -638,9 +612,13 @@ public final class ExternalObservedRoundTracker {
                 active.currentFocus, formatSet(active.currentSelected),
                 readyIdentity == null ? "" : readyIdentity.code(),
                 "credible subsequent-round prediction " + prediction.identity().code()
-                        + " after prior four-set left the display; confirming previous, seeding next");
-        confirmActive(timestampMs, transitionWitnessUsed);
-        seedNextRound(timestampMs, prediction);
+                        + " after prior four-set left the display; automatic confirmation "
+                        + "gated by the attributed history");
+        confirmActiveOrFailClosed(timestampMs, transitionWitnessUsed, prediction,
+                "credible subsequent-round prediction after a latched ambiguous boundary; "
+                        + "previous merged history never becomes ground truth; prediction "
+                        + prediction.identity().code()
+                        + " starts the next observed round for manual review.");
     }
 
     /**
@@ -728,8 +706,36 @@ public final class ExternalObservedRoundTracker {
         return sessionClosed;
     }
 
+    /**
+     * The single automatic-confirmation gate. A latched ambiguous boundary makes a round
+     * ineligible for automatic ground truth: later selections and four-sets stay evidence,
+     * never success proof, no matter what the solver predicted. The gate refuses by
+     * fail-closing the round to NEEDS_REVIEW_AMBIGUOUS with every attempt, note and event
+     * preserved, and the incoming prediction still seeds the next tracked round so the
+     * video keeps being watched without converting merged history into ground truth.
+     */
+    private void confirmActiveOrFailClosed(long timestampMs, boolean transitionWitnessUsed,
+            ExternalPrediction nextRoundPrediction, String failClosedReason) {
+        ActiveRound round = active;
+        if (round.ambiguousBoundary) {
+            finalizeAmbiguousCurrentAndSeedNext(timestampMs, nextRoundPrediction,
+                    failClosedReason + " " + round.notes);
+            return;
+        }
+        confirmActive(timestampMs, transitionWitnessUsed);
+        if (nextRoundPrediction != null) {
+            seedNextRound(timestampMs, nextRoundPrediction);
+        }
+    }
+
     private void confirmActive(long timestampMs, boolean transitionWitnessUsed) {
         ActiveRound round = active;
+        if (round.ambiguousBoundary) {
+            // Unreachable through confirmActiveOrFailClosed: a latched ambiguous boundary
+            // must never become automatic ground truth, so this stays a hard invariant.
+            throw new IllegalStateException(
+                    "An unresolved ambiguous boundary must never confirm automatically");
+        }
         active = null;
         List<Integer> success = new ArrayList<>(round.lastFourSet);
         ExternalPredictionTiming timing = timingOf(round);
@@ -804,7 +810,7 @@ public final class ExternalObservedRoundTracker {
         active = seeded;
         log(timestampMs, seeded.roundNumber, EventType.PREDICTION, "", "",
                 prediction.identity().code(),
-                "next-round prediction seeded after confirming the previous round");
+                "next-round prediction seeded after the previous round closed");
     }
 
     private void markAmbiguousBoundary(long timestampMs, String detail) {

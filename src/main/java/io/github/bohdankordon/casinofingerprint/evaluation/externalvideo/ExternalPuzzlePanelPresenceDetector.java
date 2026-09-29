@@ -283,8 +283,13 @@ public final class ExternalPuzzlePanelPresenceDetector {
             }
         }
         Mat bgr = new Mat();
-        opencv_core.merge(new MatVector(fullFrame.clone(), fullFrame.clone(), fullFrame.clone()), bgr);
-        return bgr;
+        try {
+            opencv_imgproc.cvtColor(fullFrame, bgr, opencv_imgproc.COLOR_GRAY2BGR);
+            return bgr;
+        } catch (RuntimeException e) {
+            bgr.close();
+            throw e;
+        }
     }
 
     private static Rect clamp(Rect box, int width, int height) {
