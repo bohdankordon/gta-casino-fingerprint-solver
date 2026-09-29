@@ -14,6 +14,7 @@ Stage 6C.1C characterizes the independent visual round-transition witness candid
 - Maven 3.9.16 with the Maven Wrapper
 - Bytedeco OpenCV platform 4.14.0-1.5.14 (cross-platform native binaries)
 - JUnit 5.14.4
+- JNA plus jna-platform 5.17.0 (pinned; Windows SendInput, foreground checks and abort polling for Stage 7B only, behind `input.win32`)
 
 ## Architecture
 
@@ -33,6 +34,11 @@ Stage 6C.1C characterizes the independent visual round-transition witness candid
 - `evaluation.recording.transition`: Stage 6C.1A full-rate transition characterization - the per-frame temporal trace and its run compression, the three transition summaries (hack entry, inter-round, hack exit), the offline reset experiment, the offline G0-G4 guard simulations and the transition report/contact-sheet tooling. Evaluation only, measurement only: no lifecycle state machine, no round consumption API and no production behaviour.
 - `evaluation.recording.transition`: Stage 6C.1A full-rate transition characterization - the per-frame temporal trace and its run compression, the three transition summaries (hack entry, inter-round, hack exit), the offline reset experiment, the offline G0-G4 guard simulations and the transition report/contact-sheet tooling; plus the Stage 6C.1B production lifecycle replay - every full-rate frame through the unmodified production consensus tracker and then the production lifecycle tracker, with a simulated well-behaved consumer that immediately consumes every ready round and sends no input, verified per hack and per full source against the human annotations. Evaluation only, measurement only: no input automation and no production behaviour change.
 - `evaluation.recording.transition.witness`: Stage 6C.1C independent visual round-transition witness characterization - W0..W4 witness families measured on every full-rate frame against one frozen consumed-round content baseline per round, the same-round / transition / entry / exit populations, the rule and threshold sweep with worst-case separation margins, the counterfactual same-identity replay and the exact-visual-repeat control. Evaluation only, measurement only: no production transition witness, no lifecycle change, no input, no tuning and no production 1080p support.
+- `control`: Stage 7B production control-state detector over raw gameplay pixels (selector corner brackets plus tile-interior brightness, never normalized content) with calibrated fail-closed bounds.
+- `input` plus `input.win32`: Stage 7B gameplay input intentions (`GameControl`, `GameInputSink`, foreground-target guard, abort signal) with the Windows-only SendInput tap, foreground pinning and F12 abort poll isolated in `input.win32` (JNA, pinned).
+- `execution`: Stage 7B guarded action executor (same-frame preflight, same-observation lifecycle claim, per-action visual verification, PROCEED exactly once, latched fail-closed faults) with clock-free correctness plus `VerificationPolicy` bounds.
+- `orchestration` plus `app`: Stage 7B live wiring (`LiveSolveOrchestrator`, pending-round re-attempts, `LiveFrameResult`) and the separate opt-in live CLI (`LiveSolverMain`); `DryRunSolverMain` stays input-free.
+- `evaluation.recording.control`: Stage 7B control-state evaluation over both private recordings with the committed annotation-only CSV (evaluation only, no production dependency).
 
 OpenCV `Mat` results from capture and normalization are owned by their callers and must be closed. `FingerprintSolver` closes the normalized image; the input frame remains the caller's responsibility.
 
@@ -237,6 +243,24 @@ ever attempted). Documented in docs/dry-run-orchestration.md. The full-rate dry-
 yields 8 ROUND_READY, 8 executable plans, 8 consumptions, 0 blocked and 0 desynchronizations;
 no input is sent anywhere.
 
+## Guarded live input execution (Stage 7B)
+
+Stage 7B adds the first gameplay input capability behind strict safety gates, documented in
+docs/guarded-live-input.md: a validated Stage 7A plan executes against GTA on Windows only
+after a same-frame live preflight (validated plan, configured foreground executable pinned
+by handle plus process, idle F12 abort, visually verified selector on C0 with nothing
+selected, consumable lifecycle round), the lifecycle claims that same observation before
+the first tap, and every navigation and selection is visually verified on fresh frames
+before the next input. Any mismatch latches FAULTED or ABORTED with no automatic retry;
+Tab (PROCEED) is sent exactly once and never retried. The control-state detector reads raw
+selector brackets plus tile brightness (never normalized content), input goes through
+Windows SendInput behind `GameInputSink` with no `java.awt.Robot` on the gameplay path,
+and `DryRunSolverMain` stays input-free. Production is 2560x1440 only; the live CLI
+(`LiveSolverMain --watch --enable-input --target-exe GTA5.exe`) refuses without its
+explicit opt-in and on non-Windows. The real-recording evaluation agrees on 47/47 control
+states with no input sent during implementation or testing. Stage 8 still has to prove
+live-game reliability with controlled GTA end-to-end testing.
+
 ## Roadmap
 
 1. Stage 0 - foundation
@@ -259,4 +283,10 @@ no input is sent anywhere.
     pure planner with BFS plus 24-order optimization, production orchestrator with same-frame
     planning and same-observation consumption, dry-run CLI, full-rate dry-run replay at 8 READY
     plus 8 executable plans plus 8 consumptions with zero blocked and zero desync; no input)
-8. Possible later stage - optional input automation
+   - Stage 7B - guarded live input execution (complete: production control-state detector,
+     Windows SendInput backend with foreground pinning and F12 abort, per-action visual
+     verification, same-observation claim before the first tap, latched fail-closed faults,
+     separate opt-in live CLI, 47/47 real-recording control-state evaluation, unchanged
+     Stage 7A and witness replays; production 2560x1440 on Windows only; no live-game
+     reliability claimed)
+8. Possible later stage - controlled live GTA end-to-end testing (Stage 8)
