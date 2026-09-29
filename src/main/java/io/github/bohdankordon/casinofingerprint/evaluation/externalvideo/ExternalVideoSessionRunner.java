@@ -269,6 +269,18 @@ public final class ExternalVideoSessionRunner {
                     out.println("transition confirmed");
                     out.println(event.detail());
                 }
+                case NEW_ROUND_TRANSITION -> {
+                    out.println("transition observed " + event.prediction());
+                    savePanelCrop(frame, event.round(), "transition");
+                    saveFullFrame(frame, event.round(), "transition");
+                    saveTargetAndCandidates(frame, event.round(), "transition");
+                }
+                case AMBIGUOUS -> {
+                    out.println("ambiguous boundary; evidence preserved for manual review");
+                    savePanelCrop(frame, event.round(), "ambiguous");
+                    saveFullFrame(frame, event.round(), "ambiguous");
+                    saveTargetAndCandidates(frame, event.round(), "ambiguous");
+                }
                 case ORPHAN_PREDICTION ->
                     out.println("ORPHAN_PREDICTION " + event.prediction());
                 default -> {

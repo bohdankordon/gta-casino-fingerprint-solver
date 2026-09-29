@@ -76,7 +76,34 @@ ground truth. Brief detector ambiguity preserves state and invents no change.
 
 The only automatic ground truth is a human four-set followed by a genuine structural
 next-round transition (the production lifecycle NEW_ROUND_READY, including witnessed
-same-identity transitions). The comparison is SET-based, independent of selection order:
+same-identity transitions). Event attribution is explicit: a NEW_ROUND_READY event is
+classified as first prediction for the active human round, duplicate current-round
+prediction, credible subsequent-round event, or ambiguous. Only a credible
+subsequent-round event may automatically confirm the previous four-set. In particular:
+
+- a NEW_ROUND_READY that introduces the FIRST prediction assigned to the active human
+  round is that round's own current-round prediction (ON_TIME or LATE); it can never
+  simultaneously confirm that same round, even when identities happen to match;
+- a selection clear or shrink never by itself upgrades the previous four-set to
+  successful ground truth, and a later FIRST prediction after such a reset never
+  retroactively confirms the old four-set (an ERROR reset and a successful transition
+  are indistinguishable here, so the boundary fail-closes);
+- a different prediction identity arriving while the old four-set is still visibly
+  displayed never confirms by identity change alone; it is kept diagnostically with the
+  first prediction staying primary, and the round fail-closes unless independent
+  subsequent evidence (the old four-set leaving the display plus a later credible
+  transition) establishes the boundary;
+- a clean next-round prediction ordinarily arrives after the new empty/C0 state is
+  visible, because the control stream leads recognition re-stabilization;
+- NO_PREDICTION is conservative: a human round that never received a prediction is only
+  auto-labelled successful on a genuine structural transition; an ambiguous boundary
+  without independently provable success becomes NEEDS_REVIEW_AMBIGUOUS with all
+  screenshots and events preserved for manual adjudication, never a fabricated
+  NO_PREDICTION success. A manually reviewed successful no-prediction case can still be
+  counted later. Fewer automatic confirmations are acceptable; false automatic ground
+  truth is worse than manual review.
+
+The comparison is SET-based, independent of selection order:
 
 - predicted set == observed successful set -> MATCH (only when predicted before the
   first observed selection);
@@ -86,6 +113,9 @@ same-identity transitions). The comparison is SET-based, independent of selectio
   as production success);
 - final four-set with no strong success proof (panel exit, banner, cut) ->
   NEEDS_REVIEW_FINAL_EXIT with saved screenshots;
+- ambiguous boundary (first-prediction transition claim, bare transition without
+  prediction while a four-set exists, or identity change while the old four-set is still
+  displayed) -> NEEDS_REVIEW_AMBIGUOUS with transition and ambiguous keyframes preserved;
 - session ends mid-selection -> INCOMPLETE;
 - solver ROUND_READY with no observed control round -> ORPHAN_PREDICTION (possible false
   positive, never silently discarded).

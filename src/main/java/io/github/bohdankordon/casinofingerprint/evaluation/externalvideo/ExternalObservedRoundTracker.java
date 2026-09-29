@@ -26,19 +26,42 @@ import java.util.TreeSet;
  *       attempt: the previous attempt is kept in history as failed or ambiguous, never as
  *       ground truth;</li>
  *   <li>brief detector ambiguity preserves state and invents no change;</li>
- *   <li>a final four-set with no strong success proof fail-closes to
- *       NEEDS_REVIEW_FINAL_EXIT instead of inventing a weak success detector.</li>
+ *   <li>a final four-set with no strong success proof fail-closes to review
+ *       (NEEDS_REVIEW_FINAL_EXIT or NEEDS_REVIEW_AMBIGUOUS) instead of inventing a weak
+ *       success detector;</li>
+ *   <li>a NEW_ROUND_READY event that introduces the FIRST prediction assigned to the active
+ *       human round can never simultaneously confirm that same round: CURRENT-ROUND
+ *       PREDICTION and LATER-ROUND TRANSITION are separate roles, never played by one
+ *       event;</li>
+ *   <li>a selection clear or shrink never by itself upgrades the previous four-set to
+ *       successful ground truth, and a later FIRST prediction after such a reset never
+ *       retroactively confirms the old four-set;</li>
+ *   <li>a different prediction identity arriving while the old four-set is still visibly
+ *       displayed never confirms by identity change alone: it is surfaced diagnostically
+ *       and fail-closed.</li>
  * </ul>
  *
  * <p>Production feeds one combined {@link #onDryRunEvent} call per frame that carried a
- * lifecycle event, plus {@link #onControl} for every captured frame. The combined entry
- * disambiguates the round boundary: the first NEW_ROUND_READY of a round is that round's own
- * prediction (the active round has no four-set yet), while a later NEW_ROUND_READY confirms
- * the previous round and seeds the next one. Prediction attribution assumes the control
- * stream leads the lifecycle (the new round's empty selection is visible before recognition
- * re-stabilizes); when the control stream still shows the previous four-set at prediction
- * time, a next-round prediction is attributed to the previous round and stays visible in its
- * notes, and any resulting MISMATCH is a mandatory manual-review case.
+ * lifecycle event, plus {@link #onControl} for every captured frame. The combined entry is an
+ * event-attribution state machine. An incoming NEW_ROUND_READY is classified as:
+ * <ul>
+ *   <li>A. first prediction for the currently active human round: recorded as that round's
+ *       own prediction (ON_TIME or LATE), its transition claim ignored, never confirming;</li>
+ *   <li>B. duplicate or current-round prediction: diagnostically deduped, never confirming;</li>
+ *   <li>C. credible subsequent-round event: only this may automatically confirm the previous
+ *       four-set (different identity after the old four-set left the display, or a witnessed
+ *       same-identity transition after the old four-set left the display);</li>
+ *   <li>D. ambiguous: everything else fail-closed to NEEDS_REVIEW_AMBIGUOUS with evidence
+ *       preserved, never to automatic MATCH, MISMATCH, NO_PREDICTION or LATE_PREDICTION.</li>
+ * </ul>
+ * Prediction attribution assumes the control stream leads the lifecycle (the new round's empty
+ * selection is visible before recognition re-stabilizes). A clean next-round prediction should
+ * ordinarily arrive after the new empty/C0 state is visible. When the control stream still
+ * shows the previous four-set at prediction time, the event stays with the previous round
+ * diagnostically and confirms nothing. NO_PREDICTION is especially conservative: a human
+ * round that never received a prediction is only auto-labelled successful on a genuine
+ * structural transition via the primitive {@link #onNewRoundTransition} path; the combined
+ * path never fabricates it from a clear plus a later first prediction.
  *
  * <p>State is deterministic and single-threaded. Timestamps are session elapsed milliseconds
  * assigned by the caller; they must be non-negative but are otherwise never interpreted as
@@ -264,6 +287,14 @@ public final class ExternalObservedRoundTracker {
     /**
      * Combined production entry for one frame that carried a dry-run lifecycle event.
      *
+     * <p>Event-attribution safety, stated once: a NEW_ROUND_READY event that introduces the
+     * FIRST prediction assigned to the active human round cannot simultaneously confirm that
+     * active round. CURRENT-ROUND PREDICTION and LATER-ROUND TRANSITION never share one event.
+     * A selection clear or shrink never upgrades the previous four-set to ground truth, and a
+     * different identity while the old four-set is still displayed never confirms by identity
+     * change alone. Ambiguous boundaries fail closed to NEEDS_REVIEW_AMBIGUOUS with evidence
+     * preserved.
+     *
      * @param timestampMs session elapsed milliseconds
      * @param prediction executable prediction of this frame, or null (blocked plan or no plan)
      * @param newRoundReady whether the lifecycle reported NEW_ROUND_READY on this frame
@@ -275,35 +306,169 @@ public final class ExternalObservedRoundTracker {
             boolean transitionWitnessUsed) {
         requireOpen();
         requireTimestamp(timestampMs);
-        if (newRoundReady && active != null && active.lastFourSet != null && prediction != null
-                && active.prediction != null
-                && !prediction.identity().equals(active.prediction.identity())) {
+        if (active == null) {
+            if (prediction != null) {
+                onPrediction(timestampMs, prediction);
+            }
+            if (newRoundReady) {
+                if (active != null && active.lastFourSet == null) {
+                    log(timestampMs, active.roundNumber, EventType.NEW_ROUND_TRANSITION,
+                            active.currentFocus, formatSet(active.currentSelected),
+                            readyIdentity == null ? "" : readyIdentity.code(),
+                            "transition with no observed four-set; round stays open");
+                } else if (active == null) {
+                    log(timestampMs, 0, EventType.NEW_ROUND_TRANSITION, "", "",
+                            readyIdentity == null ? "" : readyIdentity.code(),
+                            "transition with no active round; ignored");
+                } else {
+                    onNewRoundTransition(timestampMs, readyIdentity, transitionWitnessUsed);
+                }
+            }
+            return;
+        }
+        if (active.prediction == null) {
+            if (prediction == null) {
+                if (newRoundReady) {
+                    if (active.lastFourSet == null) {
+                        log(timestampMs, active.roundNumber, EventType.NEW_ROUND_TRANSITION,
+                                active.currentFocus, formatSet(active.currentSelected),
+                                readyIdentity == null ? "" : readyIdentity.code(),
+                                "transition without an observed four-set; round stays open");
+                    } else {
+                        markAmbiguousBoundary(timestampMs,
+                                "bare NEW_ROUND_READY without any prediction while a four-set "
+                                        + formatSet(active.lastFourSet)
+                                        + " exists; cannot prove success, staying open. ");
+                        log(timestampMs, active.roundNumber, EventType.NEW_ROUND_TRANSITION,
+                                active.currentFocus, formatSet(active.currentSelected),
+                                readyIdentity == null ? "" : readyIdentity.code(),
+                                "bare transition without prediction ignored; fail-closed, no confirmation");
+                    }
+                }
+                return;
+            }
+            if (active.lastFourSet == null) {
+                onPrediction(timestampMs, prediction);
+                if (newRoundReady) {
+                    log(timestampMs, active.roundNumber, EventType.NEW_ROUND_TRANSITION,
+                            active.currentFocus, formatSet(active.currentSelected),
+                            readyIdentity == null ? "" : readyIdentity.code(),
+                            "NEW_ROUND_READY on the round's own first prediction; not a transition, ignored");
+                }
+                return;
+            }
+            if (active.currentSelected.equals(active.lastFourSet)) {
+                onPrediction(timestampMs, prediction);
+                markAmbiguousBoundary(timestampMs,
+                        "FIRST prediction " + prediction.identity().code()
+                                + " arrived while prior four-set " + formatSet(active.lastFourSet)
+                                + " still displayed; recorded as late current-round prediction, "
+                                + "transition claim on the same event ignored, no confirmation. ");
+                if (newRoundReady) {
+                    log(timestampMs, active.roundNumber, EventType.NEW_ROUND_TRANSITION,
+                            active.currentFocus, formatSet(active.currentSelected),
+                            readyIdentity == null ? "" : readyIdentity.code(),
+                            "first-prediction transition claim ignored; one event cannot be both prediction and proof");
+                }
+                return;
+            }
+            String incomingCode = prediction.identity().code();
+            SortedSet<Integer> priorFour = new TreeSet<>(active.lastFourSet);
+            String priorNotes = active.notes.toString();
             log(timestampMs, active.roundNumber, EventType.NEW_ROUND_TRANSITION,
                     active.currentFocus, formatSet(active.currentSelected),
                     readyIdentity == null ? "" : readyIdentity.code(),
-                    "next-round prediction arrived while the previous round holds a four-set;"
-                            + " confirming previous, seeding next");
-            confirmActive(timestampMs, transitionWitnessUsed);
-            seedNextRound(timestampMs, prediction);
+                    "ambiguous boundary: FIRST prediction " + incomingCode
+                            + " after prior four-set " + priorFour
+                            + " left the display (now " + formatSet(active.currentSelected)
+                            + "); cannot distinguish ERROR reset from next round, fail-closed");
+            finalizeAmbiguousCurrentAndSeedNext(timestampMs, prediction,
+                    "ambiguous first prediction " + incomingCode + " after prior four-set "
+                            + priorFour
+                            + " left the display; previous four-set never becomes ground truth; "
+                            + "this prediction starts the next observed round for manual review. "
+                            + priorNotes);
             return;
         }
-        if (newRoundReady && active != null && active.lastFourSet != null
-                && active.prediction == null && prediction != null
-                && active.currentSelected.isEmpty()) {
+        if (prediction == null) {
+            if (newRoundReady) {
+                onNewRoundTransition(timestampMs, readyIdentity, transitionWitnessUsed);
+            }
+            return;
+        }
+        if (prediction.identity().equals(active.prediction.identity())) {
+            if (!newRoundReady) {
+                onPrediction(timestampMs, prediction);
+                return;
+            }
+            if (active.lastFourSet == null) {
+                onPrediction(timestampMs, prediction);
+                log(timestampMs, active.roundNumber, EventType.NEW_ROUND_TRANSITION,
+                        active.currentFocus, formatSet(active.currentSelected),
+                        readyIdentity == null ? "" : readyIdentity.code(),
+                        "same-identity NEW_ROUND_READY without an observed four-set; round stays open");
+                return;
+            }
+            if (!transitionWitnessUsed) {
+                onPrediction(timestampMs, prediction);
+                log(timestampMs, active.roundNumber, EventType.NEW_ROUND_TRANSITION,
+                        active.currentFocus, formatSet(active.currentSelected),
+                        readyIdentity == null ? "" : readyIdentity.code(),
+                        "same-identity NEW_ROUND_READY without witness treated as current-round duplicate; no confirmation");
+                return;
+            }
+            if (active.currentSelected.equals(active.lastFourSet)) {
+                onPrediction(timestampMs, prediction);
+                markAmbiguousBoundary(timestampMs,
+                        "witnessed same-identity " + prediction.identity().code()
+                                + " arrived while prior four-set " + formatSet(active.lastFourSet)
+                                + " still displayed; fail-closed, no confirmation. ");
+                log(timestampMs, active.roundNumber, EventType.NEW_ROUND_TRANSITION,
+                        active.currentFocus, formatSet(active.currentSelected),
+                        readyIdentity == null ? "" : readyIdentity.code(),
+                        "witnessed same-identity transition while four still displayed ignored; awaiting empty/new-round evidence");
+                return;
+            }
             log(timestampMs, active.roundNumber, EventType.NEW_ROUND_TRANSITION,
                     active.currentFocus, formatSet(active.currentSelected),
                     readyIdentity == null ? "" : readyIdentity.code(),
-                    "previous round ended without a prediction; this prediction starts the next");
-            confirmActive(timestampMs, transitionWitnessUsed);
+                    "witnessed same-identity next-round transition; confirming previous, seeding next");
+            confirmActive(timestampMs, true);
             seedNextRound(timestampMs, prediction);
             return;
         }
-        if (prediction != null) {
+        if (!newRoundReady) {
             onPrediction(timestampMs, prediction);
+            return;
         }
-        if (newRoundReady) {
-            onNewRoundTransition(timestampMs, readyIdentity, transitionWitnessUsed);
+        if (active.lastFourSet == null) {
+            onPrediction(timestampMs, prediction);
+            log(timestampMs, active.roundNumber, EventType.NEW_ROUND_TRANSITION,
+                    active.currentFocus, formatSet(active.currentSelected),
+                    readyIdentity == null ? "" : readyIdentity.code(),
+                    "different-identity transition without an observed four-set; round stays open");
+            return;
         }
+        if (active.currentSelected.equals(active.lastFourSet)) {
+            onPrediction(timestampMs, prediction);
+            markAmbiguousBoundary(timestampMs,
+                    "different prediction " + prediction.identity().code()
+                            + " arrived while prior four-set " + formatSet(active.lastFourSet)
+                            + " still displayed (first " + active.prediction.identity().code()
+                            + " stays primary); identity change alone never confirms, fail-closed. ");
+            log(timestampMs, active.roundNumber, EventType.NEW_ROUND_TRANSITION,
+                    active.currentFocus, formatSet(active.currentSelected),
+                    readyIdentity == null ? "" : readyIdentity.code(),
+                    "different-identity transition while four still displayed ignored; no confirmation");
+            return;
+        }
+        log(timestampMs, active.roundNumber, EventType.NEW_ROUND_TRANSITION,
+                active.currentFocus, formatSet(active.currentSelected),
+                readyIdentity == null ? "" : readyIdentity.code(),
+                "credible subsequent-round prediction " + prediction.identity().code()
+                        + " after prior four-set left the display; confirming previous, seeding next");
+        confirmActive(timestampMs, transitionWitnessUsed);
+        seedNextRound(timestampMs, prediction);
     }
 
     /**
@@ -311,7 +476,10 @@ public final class ExternalObservedRoundTracker {
      * finalized round in number order. Pending rounds never become ground truth here: a final
      * four-set with no later contradiction is NEEDS_REVIEW_FINAL_EXIT (panel exit, banner and
      * success are indistinguishable), a contradicted or partial selection is INCOMPLETE, and a
-     * prediction that never met any control observation is ORPHAN_PREDICTION.
+    * prediction that never met any control observation is ORPHAN_PREDICTION.
+     * An ambiguous boundary (first-prediction transition claim ignored, bare transition
+     * without prediction, or different identity while the old four-set is still displayed)
+     * fail-closes to NEEDS_REVIEW_AMBIGUOUS with all evidence preserved.
      */
     public List<ExternalObservedRound> closeSession(long endTimestampMs) {
         requireOpen();
@@ -331,6 +499,11 @@ public final class ExternalObservedRoundTracker {
                 log(endTimestampMs, pending.roundNumber, EventType.ORPHAN_PREDICTION, "", "",
                         pending.prediction.identity().code(),
                         "prediction without an observed round");
+            } else if (pending.ambiguousBoundary) {
+                finalized.add(buildRound(pending, endTimestampMs, null,
+                        ExternalRoundOutcome.NEEDS_REVIEW_AMBIGUOUS, timingOf(pending), false,
+                        "ambiguous boundary evidence; fail-closed, no automatic ground truth. "
+                                + pending.notes));
             } else if (pending.lastFourSet != null && !pending.selectedAfterFour) {
                 finalized.add(buildRound(pending, endTimestampMs, null,
                         ExternalRoundOutcome.NEEDS_REVIEW_FINAL_EXIT, timingOf(pending), false,
@@ -460,6 +633,32 @@ public final class ExternalObservedRoundTracker {
                 "next-round prediction seeded after confirming the previous round");
     }
 
+    private void markAmbiguousBoundary(long timestampMs, String detail) {
+        if (active == null) {
+            return;
+        }
+        active.ambiguousBoundary = true;
+        active.notes.append(detail).append(" ");
+        log(timestampMs, active.roundNumber, EventType.AMBIGUOUS, active.currentFocus,
+                formatSet(active.currentSelected), active.predictionCode(), detail);
+    }
+
+    private void finalizeAmbiguousCurrentAndSeedNext(long timestampMs,
+            ExternalPrediction nextPrediction, String reason) {
+        ActiveRound round = active;
+        active = null;
+        ExternalObservedRound ambiguous = buildRound(round, timestampMs, null,
+                ExternalRoundOutcome.NEEDS_REVIEW_AMBIGUOUS, timingOf(round), false,
+                reason == null ? "" : reason);
+        finalized.add(ambiguous);
+        log(timestampMs, round.roundNumber, EventType.AMBIGUOUS, round.currentFocus,
+                formatSet(round.currentSelected), round.predictionCode(),
+                "round fail-closed as NEEDS_REVIEW_AMBIGUOUS: " + reason);
+        if (nextPrediction != null) {
+            seedNextRound(timestampMs, nextPrediction);
+        }
+    }
+
     private void log(long timestampMs, int round, EventType type, String focus, String selected,
             String prediction, String detail) {
         ExternalSessionEvent event =
@@ -502,6 +701,7 @@ public final class ExternalObservedRoundTracker {
         boolean selectedAfterFour;
         boolean hadControl;
         boolean lastFedValid = true;
+        boolean ambiguousBoundary;
 
         ActiveRound(int roundNumber, long firstSeenMs) {
             this.roundNumber = roundNumber;

@@ -313,13 +313,233 @@ class ExternalObservedRoundTrackerTest {
     }
 
     @Test
-    void combinedDryRunEventKeepsLatePredictionOnItsOwnRound() {
+    void combinedDryRunEventDoesNotConfirmFirstPredictionOnItsOwnRound() {
         ExternalObservedRoundTracker tracker = new ExternalObservedRoundTracker();
         tracker.onControl(0, selected(0));
         tracker.onControl(100, selected(7, 1, 3, 6, 7));
         tracker.onDryRunEvent(150, prediction(FP3_1367), true, FP3_1367, false);
         List<ExternalObservedRound> rounds = tracker.closeSession(500);
         assertEquals(1, rounds.size());
-        assertEquals(ExternalRoundOutcome.LATE_PREDICTION, rounds.get(0).result());
+        ExternalObservedRound round = rounds.get(0);
+        assertTrue(round.hasPrediction(), "late prediction stays diagnostically recorded");
+        assertEquals(FP3_1367, round.predictedIdentity());
+        assertEquals(ExternalPredictionTiming.LATE, round.timing());
+        assertNull(round.observedSuccess(), "one event is never both prediction and proof");
+        assertEquals(ExternalRoundOutcome.NEEDS_REVIEW_AMBIGUOUS, round.result());
+        assertEquals(0, eventCount(tracker, EventType.ROUND_CONFIRMED));
+        assertEquals(1, eventCount(tracker, EventType.PREDICTION));
+    }
+
+    @Test
+    void explicitRegressionCaseAFirstPredictionAfterFourNeverConfirms() {
+        ExternalObservedRoundTracker tracker = new ExternalObservedRoundTracker();
+        tracker.onControl(0, selected(0));
+        tracker.onControl(100, selected(1, 1));
+        tracker.onControl(200, selected(7, 1, 3, 6, 7));
+        tracker.onDryRunEvent(250, prediction(FP3_1367), true, FP3_1367, false);
+        List<ExternalObservedRound> rounds = tracker.closeSession(900);
+        assertEquals(1, rounds.size());
+        ExternalObservedRound round = rounds.get(0);
+        assertTrue(round.hasPrediction(), "late prediction stays diagnostically recorded");
+        assertEquals(ExternalPredictionTiming.LATE, round.timing());
+        assertNull(round.observedSuccess(), "first prediction never confirms its own round");
+        assertTrue(
+                round.result() == ExternalRoundOutcome.NEEDS_REVIEW_AMBIGUOUS
+                        || round.result() == ExternalRoundOutcome.NEEDS_REVIEW_FINAL_EXIT,
+                "session end is review, not confirmed LATE_PREDICTION: " + round.result());
+        assertTrue(round.result() != ExternalRoundOutcome.LATE_PREDICTION,
+                "must NOT become automatically confirmed LATE_PREDICTION");
+        assertEquals(0, eventCount(tracker, EventType.ROUND_CONFIRMED));
+    }
+
+    @Test
+    void wrongFourClearThenFirstPredictionNeverBecomesNoPredictionSuccess() {
+        ExternalObservedRoundTracker tracker = new ExternalObservedRoundTracker();
+        tracker.onControl(0, selected(0));
+        tracker.onControl(100, selected(3, 0, 1, 2, 3));
+        tracker.onControl(200, selected(0));
+        tracker.onDryRunEvent(250, prediction(FP3_1367), true, FP3_1367, false);
+        List<ExternalObservedRound> rounds = tracker.closeSession(900);
+        for (ExternalObservedRound round : rounds) {
+            assertNull(round.observedSuccess(), "old four-set never becomes ground truth");
+            assertTrue(round.result() != ExternalRoundOutcome.NO_PREDICTION,
+                    "clear plus later first prediction never fabricates NO_PREDICTION success");
+            assertTrue(round.result() != ExternalRoundOutcome.MATCH,
+                    "old four-set never becomes MATCH ground truth");
+        }
+        assertEquals(0, eventCount(tracker, EventType.ROUND_CONFIRMED));
+        boolean wrongPreserved = rounds.stream()
+                .flatMap(r -> r.failedAttempts().stream())
+                .anyMatch(a -> a.equals(new TreeSet<>(List.of(0, 1, 2, 3))));
+        assertTrue(wrongPreserved, "wrong attempt stays in failedAttempts for manual review");
+    }
+
+    @Test
+    void wrongFourClearRetryThenGenuineTransitionOnlyRetryIsGroundTruth() {
+        ExternalObservedRoundTracker tracker = new ExternalObservedRoundTracker();
+        tracker.onControl(0, selected(0));
+        tracker.onPrediction(50, prediction(FP3_1367));
+        tracker.onControl(100, selected(3, 0, 1, 2, 3));
+        tracker.onControl(200, selected(0));
+        tracker.onControl(300, selected(7, 1, 3, 6, 7));
+        tracker.onNewRoundTransition(400, FP2_0247, false);
+        List<ExternalObservedRound> rounds = tracker.closeSession(500);
+        assertEquals(1, rounds.size());
+        ExternalObservedRound round = rounds.get(0);
+        assertEquals(ExternalRoundOutcome.MATCH, round.result());
+        assertEquals(List.of(1, 3, 6, 7), round.observedSuccess());
+        assertEquals(2, round.attempts());
+        assertEquals(1, round.failedAttempts().size());
+        assertEquals(new TreeSet<>(List.of(0, 1, 2, 3)), round.failedAttempts().get(0));
+    }
+
+    @Test
+    void differentPredictionWhileFourVisibleNeverConfirms() {
+        ExternalObservedRoundTracker tracker = new ExternalObservedRoundTracker();
+        tracker.onControl(0, selected(0));
+        tracker.onPrediction(50, prediction(FP3_1367));
+        tracker.onControl(100, selected(7, 1, 3, 6, 7));
+        tracker.onDryRunEvent(150, prediction(FP2_0247), true, FP2_0247, false);
+        List<ExternalObservedRound> rounds = tracker.closeSession(500);
+        assertEquals(1, rounds.size());
+        ExternalObservedRound round = rounds.get(0);
+        assertEquals(FP3_1367, round.predictedIdentity(), "first stays primary");
+        assertNull(round.observedSuccess(), "identity change alone never confirms");
+        assertEquals(ExternalRoundOutcome.NEEDS_REVIEW_AMBIGUOUS, round.result());
+        assertEquals(0, eventCount(tracker, EventType.ROUND_CONFIRMED));
+        assertEquals(1, eventCount(tracker, EventType.SECOND_PREDICTION));
+        assertTrue(round.notes().contains("FP_2"), "different identity stays diagnostically visible");
+    }
+
+    @Test
+    void cleanRoundViaCredibleCombinedTransitionStillMatches() {
+        ExternalObservedRoundTracker tracker = new ExternalObservedRoundTracker();
+        tracker.onControl(0, selected(0));
+        tracker.onDryRunEvent(50, prediction(FP3_1367), true, FP3_1367, false);
+        tracker.onControl(100, selected(7, 1, 3, 6, 7));
+        tracker.onControl(150, selected(0));
+        tracker.onDryRunEvent(200, prediction(FP2_0247), true, FP2_0247, false);
+        tracker.onControl(250, selected(2, 2));
+        List<ExternalObservedRound> rounds = tracker.closeSession(600);
+        assertEquals(2, rounds.size());
+        assertEquals(ExternalRoundOutcome.MATCH, rounds.get(0).result());
+        assertEquals(List.of(1, 3, 6, 7), rounds.get(0).observedSuccess());
+        assertEquals(ExternalPredictionTiming.ON_TIME, rounds.get(0).timing());
+        assertEquals(FP2_0247, rounds.get(1).predictedIdentity());
+    }
+
+    @Test
+    void cleanMismatchViaCredibleCombinedTransitionStillMismatches() {
+        ExternalObservedRoundTracker tracker = new ExternalObservedRoundTracker();
+        tracker.onControl(0, selected(0));
+        tracker.onPrediction(50, prediction(FP2_0247));
+        tracker.onControl(100, selected(7, 1, 3, 6, 7));
+        tracker.onControl(150, selected(0));
+        tracker.onDryRunEvent(200, prediction(FP3_1367), true, FP3_1367, false);
+        List<ExternalObservedRound> rounds = tracker.closeSession(600);
+        assertEquals(2, rounds.size());
+        assertEquals(ExternalRoundOutcome.MISMATCH, rounds.get(0).result());
+        assertEquals(List.of(1, 3, 6, 7), rounds.get(0).observedSuccess());
+        assertEquals(FP2_0247, rounds.get(0).predictedIdentity());
+    }
+
+    @Test
+    void genuineSameIdentityWitnessedCombinedTransitionStillWorks() {
+        ExternalObservedRoundTracker tracker = new ExternalObservedRoundTracker();
+        tracker.onControl(0, selected(0));
+        tracker.onPrediction(50, witnessed(FP3_1367));
+        tracker.onControl(100, selected(7, 1, 3, 6, 7));
+        tracker.onControl(150, selected(0));
+        tracker.onDryRunEvent(200, witnessed(FP3_1367), true, FP3_1367, true);
+        tracker.onControl(250, selected(0));
+        List<ExternalObservedRound> rounds = tracker.closeSession(600);
+        assertEquals(2, rounds.size());
+        assertEquals(ExternalRoundOutcome.MATCH, rounds.get(0).result());
+        assertTrue(rounds.get(0).transitionWitnessUsed());
+        assertEquals(FP3_1367, rounds.get(1).predictedIdentity());
+    }
+
+    @Test
+    void noPredictionWithoutProvableBoundaryIsAmbiguousNotFabricated() {
+        ExternalObservedRoundTracker tracker = new ExternalObservedRoundTracker();
+        tracker.onControl(0, selected(0));
+        tracker.onControl(100, selected(7, 1, 3, 6, 7));
+        tracker.onControl(200, selected(0));
+        tracker.onDryRunEvent(250, prediction(FP3_1367), true, FP3_1367, false);
+        List<ExternalObservedRound> rounds = tracker.closeSession(900);
+        for (ExternalObservedRound round : rounds) {
+            assertTrue(round.result() != ExternalRoundOutcome.NO_PREDICTION,
+                    "without independently provable boundary, never fabricate NO_PREDICTION");
+            assertNull(round.observedSuccess(), "no automatic ground truth without proof");
+        }
+        assertTrue(rounds.stream().anyMatch(
+                r -> r.result() == ExternalRoundOutcome.NEEDS_REVIEW_AMBIGUOUS),
+                "ambiguous boundary fail-closes to NEEDS_REVIEW_AMBIGUOUS");
+        assertEquals(0, eventCount(tracker, EventType.ROUND_CONFIRMED));
+    }
+
+    @Test
+    void ambiguityDoesNotDestroyEarlierEvidence() {
+        ExternalObservedRoundTracker tracker = new ExternalObservedRoundTracker();
+        tracker.onControl(0, selected(0));
+        tracker.onPrediction(50, prediction(FP3_1367));
+        tracker.onControl(100, selected(3, 0, 1, 2, 3));
+        tracker.onControl(200, selected(0));
+        tracker.onControl(300, selected(7, 1, 3, 6, 7));
+        tracker.onDryRunEvent(350, prediction(FP2_0247), true, FP2_0247, false);
+        List<ExternalObservedRound> rounds = tracker.closeSession(900);
+        assertEquals(1, rounds.size());
+        ExternalObservedRound round = rounds.get(0);
+        assertEquals(ExternalRoundOutcome.NEEDS_REVIEW_AMBIGUOUS, round.result());
+        assertNull(round.observedSuccess());
+        assertEquals(FP3_1367, round.predictedIdentity(), "first prediction preserved");
+        assertEquals(ExternalPredictionTiming.ON_TIME, round.timing(), "timing preserved");
+        assertEquals(1, round.failedAttempts().size(), "failed attempts preserved");
+        assertEquals(new TreeSet<>(List.of(0, 1, 2, 3)), round.failedAttempts().get(0));
+        assertTrue(round.notes().contains("FP_2"), "ambiguous identity preserved in notes");
+        assertTrue(eventCount(tracker, EventType.PREDICTION) >= 1, "prediction event preserved");
+        assertTrue(eventCount(tracker, EventType.ATTEMPT_RESET) >= 1, "reset event preserved");
+    }
+
+    @Test
+    void bareTransitionWithoutPredictionWithFourIsAmbiguousNotSuccess() {
+        ExternalObservedRoundTracker tracker = new ExternalObservedRoundTracker();
+        tracker.onControl(0, selected(0));
+        tracker.onControl(100, selected(7, 1, 3, 6, 7));
+        tracker.onDryRunEvent(150, null, true, FP3_1367, false);
+        List<ExternalObservedRound> rounds = tracker.closeSession(500);
+        assertEquals(1, rounds.size());
+        assertNull(rounds.get(0).observedSuccess());
+        assertEquals(ExternalRoundOutcome.NEEDS_REVIEW_AMBIGUOUS, rounds.get(0).result());
+        assertEquals(0, eventCount(tracker, EventType.ROUND_CONFIRMED));
+    }
+
+    @Test
+    void sameIdentityWithoutWitnessViaCombinedNeverConfirms() {
+        ExternalObservedRoundTracker tracker = new ExternalObservedRoundTracker();
+        tracker.onControl(0, selected(0));
+        tracker.onPrediction(50, prediction(FP3_1367));
+        tracker.onControl(100, selected(7, 1, 3, 6, 7));
+        tracker.onDryRunEvent(150, prediction(FP3_1367), true, FP3_1367, false);
+        List<ExternalObservedRound> rounds = tracker.closeSession(500);
+        assertEquals(1, rounds.size());
+        assertNull(rounds.get(0).observedSuccess());
+        assertTrue(rounds.get(0).result() != ExternalRoundOutcome.MATCH,
+                "same-identity without witness is a duplicate, not a transition");
+        assertEquals(0, eventCount(tracker, EventType.ROUND_CONFIRMED));
+    }
+
+    @Test
+    void earlyFirstPredictionDoesNotPreventLaterMatch() {
+        ExternalObservedRoundTracker tracker = new ExternalObservedRoundTracker();
+        tracker.onControl(0, selected(0));
+        tracker.onDryRunEvent(50, prediction(FP3_1367), true, FP3_1367, false);
+        tracker.onControl(100, selected(7, 1, 3, 6, 7));
+        tracker.onControl(150, selected(0));
+        tracker.onDryRunEvent(200, prediction(FP2_0247), true, FP2_0247, false);
+        List<ExternalObservedRound> rounds = tracker.closeSession(600);
+        assertEquals(2, rounds.size());
+        assertEquals(ExternalRoundOutcome.MATCH, rounds.get(0).result());
+        assertEquals(ExternalPredictionTiming.ON_TIME, rounds.get(0).timing());
     }
 }
