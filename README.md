@@ -224,6 +224,19 @@ no matcher or policy change, no production 1080p support. Normal real-recording 
 8 READY and 8 consumed with no extra witness events; the counterfactual A to A production replay
 yields 8 READY, 8 consumed and 4 witnessed repeated-identity READY events.
 
+## Dry-run solve orchestration (Stage 7A)
+
+Stage 7A adds the first end-to-end solver orchestration layer with ZERO gameplay input:
+a pure navigation model, a dry-run planner (BFS shortest paths plus exhaustive 24-order
+optimization), one production orchestrator combining the existing pipeline, consensus,
+lifecycle and witness pieces, a separate dry-run CLI, and a real-recording dry-run replay.
+The real recordings establish the navigation contract used here: every round starts with the
+selector on C0, moves are discrete single orthogonal steps along the twenty witnessed interior
+transitions, Enter never moves focus, and grid edges stay unmodelled (no outward step was
+ever attempted). Documented in docs/dry-run-orchestration.md. The full-rate dry-run replay
+yields 8 ROUND_READY, 8 executable plans, 8 consumptions, 0 blocked and 0 desynchronizations;
+no input is sent anywhere.
+
 ## Roadmap
 
 1. Stage 0 - foundation
@@ -239,7 +252,11 @@ yields 8 READY, 8 consumed and 4 witnessed repeated-identity READY events.
    - Stage 6C.1C - independent visual round-transition witness characterization (complete: W0..W4 witness families measured on 4442 full-rate frames against one frozen consumed-round baseline per round, the same-round / transition / entry / exit populations, a 104 rule threshold sweep with worst-case separation margins, the counterfactual same-identity replay and the exact-visual-repeat control; measurement only - no production witness, no lifecycle change, no input and no tuning)
    - Stage 6C.1D - production structural transition witness (complete: identity-independent 0.50
      and 6-of-9 rule, owned witness baseline, additive lifecycle path, coordinator consume plus
-     re-arm, observation ownership path, normal and counterfactual A to A production replays;
-     no input and no tuning)
+    re-arm, observation ownership path, normal and counterfactual A to A production replays;
+    no input and no tuning)
    - Stage 6C/6D - any tuning based on the measured baseline (NOT started)
+  - Stage 7A - dry-run solve orchestration (complete: characterized C0-start navigation,
+    pure planner with BFS plus 24-order optimization, production orchestrator with same-frame
+    planning and same-observation consumption, dry-run CLI, full-rate dry-run replay at 8 READY
+    plus 8 executable plans plus 8 consumptions with zero blocked and zero desync; no input)
 8. Possible later stage - optional input automation
