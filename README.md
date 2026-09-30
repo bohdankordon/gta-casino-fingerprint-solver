@@ -276,7 +276,7 @@ Set-1 scan codes with the extended-key flag for arrows and the main-Enter make c
 SELECT, an explicit 10..200 ms hold whose failure paths always still submit the key-up, and
 a REQUIRED explicitly configured abort key because F12 is a Steam screenshot shortcut. No
 characterization result is claimed yet: the user runs the manual matrix after review and
-merge. Nothing was promoted to production, no production input path changed, BattlEye stays
+merge. Stage 8C.2 scan-code characterization passed for arrows + SELECT. PROCEED/Tab validation remains pending. Production promotion remains blocked. Stage 8C.3 adds a dedicated double-opt-in Tab probe documented in docs/stage8c-proceed-characterization.md. Nothing was promoted to production, no production input path changed, BattlEye stays
 enabled and unchanged, no bypass technique exists, and Stage 8D is blocked.
 
 ## Roadmap
