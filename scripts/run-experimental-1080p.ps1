@@ -22,20 +22,12 @@ function Fail([string]$Message, [int]$Code = 2) {
     Write-Error $Message
     exit $Code
 }
-# Runs a native command, teeing all output to a log, and returns the native exit code.
-# Stderr text from the build (for example expected OpenCV warnings inside unit tests)
-# must never become a terminating script error, so $ErrorActionPreference is relaxed
-# only for the duration of the call. Callers decide success from the returned code.
-function Invoke-Native([string]$FilePath, [string[]]$Arguments, [string]$LogPath) {
-    $previous = $ErrorActionPreference
-    $ErrorActionPreference = "Continue"
-    try {
-        & $FilePath @Arguments 2>&1 | Tee-Object -FilePath $LogPath
-        return $LASTEXITCODE
-    } finally {
-        $ErrorActionPreference = $previous
-    }
-}
+# Native-call note: stderr text from the build (for example the expected OpenCV warning
+# inside the corrupt-asset unit test) must never become a terminating script error, so
+# every mvnw.cmd pipeline below runs inline with $ErrorActionPreference relaxed to
+# Continue and restores Stop afterwards. Pipelines stay inline (never inside a function)
+# so their console output is not captured into a return value; the native exit code is
+# read from $LASTEXITCODE immediately (Tee-Object is a cmdlet and never replaces it).
 
 if (-not (Test-Path ".\mvnw.cmd")) { Fail "Not a repository root: mvnw.cmd not found." }
 if (-not (Test-Path ".\fixtures\gameplay\layout\representative-2560x1440.csv")) { Fail "Not a repository root: stable 1440p layout missing." }
@@ -78,10 +70,13 @@ $tempVerifyLog = Join-Path ([System.IO.Path]::GetTempPath()) "gta-fingerprint-10
 Write-Output "Running clean verify (rebuilds target/classes from scratch)..."
 Write-Output "Temporary verify log: $tempVerifyLog"
 $verifyExit = 1
+$previousPreference = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
 try {
-    # Invoke-Native returns mvnw.cmd's own exit code (Tee-Object success never replaces it).
-    $verifyExit = Invoke-Native ".\mvnw.cmd" @("-B", "-ntp", "clean", "verify") $tempVerifyLog
+    & .\mvnw.cmd -B -ntp clean verify 2>&1 | Tee-Object -FilePath $tempVerifyLog
+    $verifyExit = $LASTEXITCODE
 } finally {
+    $ErrorActionPreference = $previousPreference
     New-Item -ItemType Directory -Force -Path $runDir | Out-Null
     if (Test-Path -LiteralPath $tempVerifyLog) {
         Copy-Item -LiteralPath $tempVerifyLog -Destination $verifyLog -Force
@@ -93,7 +88,15 @@ if ($verifyExit -ne 0) {
 }
 Write-Output "clean verify passed. Log preserved at $verifyLog."
 Write-Output "Listing monitors (input-free, no opt-in needed)..."
-$monitorsExit = Invoke-Native ".\mvnw.cmd" @("-B", "-ntp", "-q", "compile", "exec:java", "-Dexec.mainClass=io.github.bohdankordon.casinofingerprint.app.LiveSolverMain", "-Dexec.args=--list-monitors") $monitorsLog
+$monitorsExit = 1
+$previousPreference = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
+try {
+    & .\mvnw.cmd -B -ntp -q compile exec:java "-Dexec.mainClass=io.github.bohdankordon.casinofingerprint.app.LiveSolverMain" "-Dexec.args=--list-monitors" 2>&1 | Tee-Object -FilePath $monitorsLog
+    $monitorsExit = $LASTEXITCODE
+} finally {
+    $ErrorActionPreference = $previousPreference
+}
 if ($monitorsExit -ne 0) { Fail "Monitor listing FAILED (exit $monitorsExit). See $monitorsLog." 3 }
 $modeName = "ListMonitors"
 if ($RecognitionOnly) { $modeName = "RecognitionOnly" }
@@ -128,7 +131,15 @@ if ($RecognitionOnly) {
     $execArgs = "--monitor $Monitor $kind --enable-experimental-1080p"
     Write-Output "Recognition-only preflight (NO input will be sent):"
     Write-Output "LiveRecognitionMain $execArgs"
-    $recognitionExit = Invoke-Native ".\mvnw.cmd" @("-B", "-ntp", "-q", "compile", "exec:java", "-Dexec.mainClass=io.github.bohdankordon.casinofingerprint.app.LiveRecognitionMain", "-Dexec.args=$execArgs") $runLog
+    $recognitionExit = 1
+    $previousPreference = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        & .\mvnw.cmd -B -ntp -q compile exec:java "-Dexec.mainClass=io.github.bohdankordon.casinofingerprint.app.LiveRecognitionMain" "-Dexec.args=$execArgs" 2>&1 | Tee-Object -FilePath $runLog
+        $recognitionExit = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $previousPreference
+    }
     Write-Output "Exit: $recognitionExit. Log saved to $runLog. No input was sent."
     exit $recognitionExit
 }
@@ -136,6 +147,14 @@ $execArgs = "--monitor $Monitor --watch --enable-input --enable-experimental-108
 Write-Output "EXPERIMENTAL 1080p live solver with REAL input:"
 Write-Output "LiveSolverMain $execArgs"
 Write-Output "Emergency abort: hold $AbortKey. Ctrl+C stops the watcher itself."
-$liveExit = Invoke-Native ".\mvnw.cmd" @("-B", "-ntp", "-q", "compile", "exec:java", "-Dexec.mainClass=io.github.bohdankordon.casinofingerprint.app.LiveSolverMain", "-Dexec.args=$execArgs") $runLog
+$liveExit = 1
+$previousPreference = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
+try {
+    & .\mvnw.cmd -B -ntp -q compile exec:java "-Dexec.mainClass=io.github.bohdankordon.casinofingerprint.app.LiveSolverMain" "-Dexec.args=$execArgs" 2>&1 | Tee-Object -FilePath $runLog
+    $liveExit = $LASTEXITCODE
+} finally {
+    $ErrorActionPreference = $previousPreference
+}
 Write-Output "Exit: $liveExit. Log saved to $runLog."
 exit $liveExit
