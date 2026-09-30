@@ -15,7 +15,8 @@ import io.github.bohdankordon.casinofingerprint.input.EmergencyAbortKey;
  * {@link IllegalArgumentException} before anything is captured.
  */
 public record LiveSolverOptions(Integer monitorIndex, Mode mode, long intervalMillis,
-        int stableFrames, boolean inputEnabled, String targetExecutable, EmergencyAbortKey abortKey, boolean help) {
+        int stableFrames, boolean inputEnabled, String targetExecutable, EmergencyAbortKey abortKey,
+        boolean experimental1080p, boolean help) {
 
     /** What the live solver should do with the desktop. */
     public enum Mode {
@@ -88,6 +89,7 @@ public record LiveSolverOptions(Integer monitorIndex, Mode mode, long intervalMi
         boolean watch = false;
         boolean help = false;
         boolean inputEnabled = false;
+        boolean experimental1080p = false;
         String targetExecutable = null;
         String abortKeyName = null;
         Integer monitorIndex = null;
@@ -99,6 +101,7 @@ public record LiveSolverOptions(Integer monitorIndex, Mode mode, long intervalMi
                 case "--list-monitors" -> listMonitors = true;
                 case "--watch" -> watch = true;
                 case "--enable-input" -> inputEnabled = true;
+                case "--enable-experimental-1080p" -> experimental1080p = true;
                 case "--help", "-h" -> help = true;
                 case "--monitor" -> monitorIndex = intValue(args, ++index, argument);
                 case "--interval-ms" -> intervalMillis = longValue(args, ++index, argument);
@@ -115,7 +118,7 @@ public record LiveSolverOptions(Integer monitorIndex, Mode mode, long intervalMi
         }
         if (help) {
             return new LiveSolverOptions(null, Mode.HELP, DEFAULT_INTERVAL_MILLIS,
-                    DEFAULT_STABLE_FRAMES, false, null, null, true);
+                    DEFAULT_STABLE_FRAMES, false, null, null, false, true);
         }
         int modes = (listMonitors ? 1 : 0) + (watch ? 1 : 0);
         if (modes == 0) {
@@ -150,7 +153,7 @@ public record LiveSolverOptions(Integer monitorIndex, Mode mode, long intervalMi
             throw new IllegalArgumentException("--abort-key needs --enable-input: live input stays strictly opt-in");
         }
         return new LiveSolverOptions(monitorIndex, mode, intervalMillis, stableFrames,
-                inputEnabled, targetExecutable, abortKey, false);
+                inputEnabled, targetExecutable, abortKey, experimental1080p, false);
     }
 
     /** Command-line help text, also printed for usage errors. */
@@ -166,7 +169,7 @@ public record LiveSolverOptions(Integer monitorIndex, Mode mode, long intervalMi
                 + separator
                 + "       [--monitor <index>] --watch --enable-input --target-exe <name> --abort-key <name>"
                 + separator
-                + "       [--interval-ms <ms>] [--stable-frames <n>]"
+                + "       [--interval-ms <ms>] [--stable-frames <n>] [--enable-experimental-1080p]"
                 + separator + separator
                 + "  --list-monitors       list monitors with logical bounds and physical display mode"
                 + separator
@@ -177,6 +180,16 @@ public record LiveSolverOptions(Integer monitorIndex, Mode mode, long intervalMi
                 + "  --watch               capture, plan and send guarded input until interrupted"
                 + separator
                 + "  --enable-input        explicit opt-in: without it live mode refuses to start"
+                + separator
+                + "  --enable-experimental-1080p"
+                + separator
+                + "                        EXPERIMENTAL native 1920x1080 profile instead of the stable"
+                + separator
+                + "                        2560x1440 profile. Offline real-recording evidence only;"
+                + separator
+                + "                        independent live-PC validation is still pending. Without"
+                + separator
+                + "                        this flag the stable 1440p profile is always used."
                 + separator
                 + "  --target-exe <name>   exact foreground executable, e.g. GTA5_Enhanced.exe (required)"
                 + separator

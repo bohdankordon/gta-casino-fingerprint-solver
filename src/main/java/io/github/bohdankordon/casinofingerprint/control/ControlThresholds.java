@@ -33,6 +33,29 @@ public record ControlThresholds(int focusFloor, int focusMargin, int focusCeilin
     public static final ControlThresholds PRODUCTION_1440P =
             new ControlThresholds(150, 150, 600, 45, 20);
 
+    /**
+     * EXPERIMENTAL 1920x1080 bounds for the opt-in live profile.
+     *
+     * <p>Promoted from the Stage 6 / Stage 7 evaluation-only 1080p geometry, measured on the
+     * private real 1080p recording (four stable correct rounds, 24/24 control-state rows).
+     * The count-based focus bounds scale by the exact bracket-band pixel area after integer
+     * rounding, NOT by the naive 0.75^2 = 0.5625 square:
+     *
+     * <pre>
+     * reference 1440 tile size = 152, 1080 tile size = 114
+     * bandPixelCount(152) = 6080, bandPixelCount(114) = 3192
+     * ratio = 3192 / 6080 = 0.525
+     * 150 * 0.525 = 78.75 -&gt; 79 rounded
+     * 600 * 0.525 = 315.0  -&gt; 315
+     * </pre>
+     *
+     * <p>The interior bounds are absolute gray levels and stay unchanged: unselected tiles
+     * read 17..29 mean gray and selected tiles read 61..109 at 1080p, so 45 plus a 20 lead
+     * over the darkest tile of the same frame still splits the gap.
+     */
+    public static final ControlThresholds EXPERIMENTAL_1080P =
+            new ControlThresholds(79, 79, 315, 45, 20);
+
     public ControlThresholds {
         if (focusFloor < 0 || focusMargin < 0 || focusCeiling < 0
                 || selectFloor < 0 || selectDelta < 0) {

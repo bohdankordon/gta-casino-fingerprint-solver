@@ -261,6 +261,10 @@ and `DryRunSolverMain` stays input-free. Production is 2560x1440 only; the live 
 explicit opt-in and on non-Windows. The real-recording evaluation agrees on 47/47 control
 states with no input sent during implementation or testing. Stage 8 still has to prove
 live-game reliability with controlled GTA end-to-end testing.
+On the experimental Stage 8D.2A branch only, an opt-in native 1920x1080 profile
+(`--enable-experimental-1080p`, see docs/experimental-1080p-live.md) carries offline
+real-recording evidence with independent live validation still pending; 2560x1440
+remains the only validated live profile and no 1080p live reliability is claimed.
 
 ## Guarded single-tap input diagnostics and delivery characterization (Stage 8C)
 
@@ -334,3 +338,6 @@ NOT complete and Stage 8D remains blocked until that smoke passes.
    - Stage 8C.3 - dedicated Tab probe plus Stage 8C.4 production promotion (Tab validated;
      SCANCODE_BATCH promoted for all six controls; explicit abort-key; smoke pending)
    - Stage 8D - end-to-end vault testing (BLOCKED until Stage 8C smoke passes)
+   - Stage 8D.2A - experimental native 1080p live profile (branch only: explicit
+     `--enable-experimental-1080p` opt-in, committed edge-scaled manifest, offline
+     real-recording evidence; independent live-PC validation pending, main stays 2560x1440)

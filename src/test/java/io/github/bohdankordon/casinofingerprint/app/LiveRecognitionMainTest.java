@@ -60,14 +60,17 @@ class LiveRecognitionMainTest {
 
         assertEquals(0, exit, "Exit code");
         String text = run.out();
-        assertTrue(text.contains("monitors (2), layout requires physical 2560x1440"),
+        assertTrue(text.contains("monitors (2), stable requires physical 2560x1440"),
                 "Header: " + text);
+        assertTrue(text.contains("experimental requires physical 1920x1080"),
+                "Experimental header: " + text);
         assertTrue(text.contains(
                 "[0] DISPLAY-1 primary logical 0,0 2048x1152 physical 2560x1440 @ 59.9 Hz"),
                 "First monitor: " + text);
-        assertTrue(text.contains("-> supported"), "Matching monitor marked supported: " + text);
-        assertTrue(text.contains("-> unsupported (physical mode is not 2560x1440)"),
-                "Other monitor marked unsupported: " + text);
+        assertTrue(text.contains("stable 1440: supported"),
+                "Matching monitor marked supported: " + text);
+        assertTrue(text.contains("experimental 1080: supported"),
+                "1080 monitor marked experimental-supported: " + text);
         assertEquals(0, run.factory.captureCount(), "Listing monitors captures nothing");
     }
 

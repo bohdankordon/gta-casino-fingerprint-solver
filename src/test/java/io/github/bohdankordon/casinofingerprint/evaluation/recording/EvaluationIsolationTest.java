@@ -19,8 +19,9 @@ import org.junit.jupiter.api.Test;
  *
  * <p>The recording annotations, the private recordings and the whole benchmark are evaluation-only:
  * no production package may read them, no production class may depend on the evaluation package, and
- * no 1920x1080 layout may become a bundled production manifest. Evaluation covers every package
- * below {@code evaluation/}: the Stage 6 recording benchmark and the Stage 8A external-video
+ * no 1920x1080 layout other than the explicit Stage 8D.2A experimental manifest may become a
+ * bundled production manifest. Evaluation covers every package
+  * below {@code evaluation/}: the Stage 6 recording benchmark and the Stage 8A external-video
  * validation alike. The guard is static source inspection, so it fails the moment a production
  * class starts reaching for benchmark material.
  */
@@ -108,7 +109,7 @@ class EvaluationIsolationTest {
     }
 
     @Test
-    void onlyTheProduction2560x1440LayoutIsBundled() throws IOException {
+    void onlyTheKnownLayoutsAreBundled() throws IOException {
         assertEquals(2560, GameplayLayout.REPRESENTATIVE_WIDTH);
         assertEquals(1440, GameplayLayout.REPRESENTATIVE_HEIGHT);
         Path layoutDirectory = RecordingTestSupport.PROJECT_ROOT.resolve("fixtures/gameplay/layout");
@@ -116,8 +117,10 @@ class EvaluationIsolationTest {
         try (Stream<Path> files = Files.list(layoutDirectory)) {
             manifests = files.map(path -> path.getFileName().toString()).sorted().toList();
         }
-        assertEquals(List.of("representative-2560x1440.csv"), manifests,
-                "the derived 1920x1080 geometry must stay evaluation-only");
+        assertEquals(List.of("experimental-1920x1080.csv", "representative-2560x1440.csv"), manifests,
+                "only the stable 1440p manifest and the explicit experimental 1080p manifest "
+                        + "may be bundled; no other resolution may gain a production-readable layout, "
+                        + "and the free-form derived 1920x1080 geometry still stays below target/");
     }
 
     @Test
