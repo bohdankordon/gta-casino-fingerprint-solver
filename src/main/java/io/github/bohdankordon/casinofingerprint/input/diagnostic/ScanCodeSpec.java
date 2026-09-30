@@ -23,7 +23,10 @@ import java.util.Objects;
  *       by {@code VK_RETURN}.</li>
  * </ul>
  *
- * <p>PROCEED has no mapping: Tab is never sent by Stage 8C.
+ * <p>PROCEED has no general mapping: Tab is never sent by the Stage 8C.1 single-tap
+ * diagnostic or by the Stage 8C.2 characterization probe. The dedicated Stage 8C.3 proceed
+ * probe owns the only Tab mapping through {@link #tabForProceedProbe()}, so the general
+ * {@link #forControl(GameControl)} refusal stays the ban that every other path enforces.
  *
  * @param scanCode the Set-1 make code without any {@code E0} prefix
  * @param extended true when the physical key carries the {@code E0} extended prefix
@@ -39,6 +42,12 @@ public record ScanCodeSpec(int scanCode, boolean extended) {
     public static final int ARROW_RIGHT = 0x4D;
     /** Main keyboard Enter make code (1C); the keypad Enter is its E0 variant. */
     public static final int MAIN_ENTER = 0x1C;
+    /**
+     * Main keyboard Tab make code (0F), non-extended. This constant belongs to the
+     * dedicated Stage 8C.3 proceed probe only; it is never reachable through
+     * {@link #forControl(GameControl)}.
+     */
+    public static final int TAB_PROCEED = 0x0F;
 
     public ScanCodeSpec {
         if (scanCode < 0 || scanCode > 0xFF) {
@@ -62,5 +71,19 @@ public record ScanCodeSpec(int scanCode, boolean extended) {
             case PROCEED -> throw new IllegalArgumentException("PROCEED is forbidden in Stage 8C:"
                     + " Tab has no characterization mapping and is never sent");
         };
+    }
+
+    /**
+     * The Set-1 Tab representation for the dedicated Stage 8C.3 proceed probe only:
+     * make code {@code 0x0F}, non-extended (Tab carries no {@code E0} prefix).
+     *
+     * <p>This is deliberately a separate method so the general {@link #forControl(GameControl)}
+     * mapping keeps refusing PROCEED. Only {@code ProceedDiagnosticPlan} may call it; no
+     * general control path, delivery plan or CLI may route PROCEED through here silently.
+     *
+     * @return the Tab scan-code spec (0x0F, non-extended)
+     */
+    public static ScanCodeSpec tabForProceedProbe() {
+        return new ScanCodeSpec(TAB_PROCEED, false);
     }
 }
