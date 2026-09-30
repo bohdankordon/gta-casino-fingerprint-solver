@@ -51,14 +51,35 @@ if ($dirty) {
 Write-Output "Working tree is clean."
 $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
 $runDir = Join-Path "target/stage8d-1080p-live" $timestamp
-New-Item -ItemType Directory -Force -Path $runDir | Out-Null
 $verifyLog = Join-Path $runDir "verify.log"
 $monitorsLog = Join-Path $runDir "monitors.log"
 $runLog = Join-Path $runDir "run.log"
+# The verify log must NOT live below target/ while `mvn clean` runs: clean deletes
+# target/, so a log opened there by Tee-Object could break the delete on Windows and
+# the durable destination would be wiped by the very command it records. The final
+# target/stage8d-1080p-live/<timestamp>/ directory is therefore created only AFTER
+# Maven has finished, and the temp log is copied there.
+$unique = [Guid]::NewGuid().ToString("N").Substring(0, 8)
+$tempVerifyLog = Join-Path ([System.IO.Path]::GetTempPath()) "gta-fingerprint-1080-verify-$timestamp-$unique.log"
 Write-Output "Running clean verify (rebuilds target/classes from scratch)..."
-& .\mvnw.cmd -B -ntp clean verify 2>&1 | Tee-Object -FilePath $verifyLog
-if ($LASTEXITCODE -ne 0) { Fail "clean verify FAILED. See $verifyLog." 3 }
-Write-Output "clean verify passed."
+Write-Output "Temporary verify log: $tempVerifyLog"
+$verifyExit = 1
+try {
+    & .\mvnw.cmd -B -ntp clean verify 2>&1 | Tee-Object -FilePath $tempVerifyLog
+    # $LASTEXITCODE is mvnw.cmd's native exit code: Tee-Object is a cmdlet and does not
+    # overwrite it, but capture it immediately, before any other native command runs.
+    $verifyExit = $LASTEXITCODE
+} finally {
+    New-Item -ItemType Directory -Force -Path $runDir | Out-Null
+    if (Test-Path -LiteralPath $tempVerifyLog) {
+        Copy-Item -LiteralPath $tempVerifyLog -Destination $verifyLog -Force
+        Remove-Item -LiteralPath $tempVerifyLog -Force
+    }
+}
+if ($verifyExit -ne 0) {
+    Fail "clean verify FAILED (exit $verifyExit). Preserved log: $verifyLog. Stopping: no monitor listing, no recognition, no live run." 3
+}
+Write-Output "clean verify passed. Log preserved at $verifyLog."
 Write-Output "Listing monitors (input-free, no opt-in needed)..."
 & .\mvnw.cmd -B -ntp -q compile exec:java "-Dexec.mainClass=io.github.bohdankordon.casinofingerprint.app.LiveSolverMain" "-Dexec.args=--list-monitors" 2>&1 | Tee-Object -FilePath $monitorsLog
 if ($LASTEXITCODE -ne 0) { Fail "Monitor listing FAILED. See $monitorsLog." 3 }

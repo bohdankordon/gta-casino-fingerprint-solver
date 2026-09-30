@@ -68,8 +68,9 @@ public record ControlThresholds(int focusFloor, int focusMargin, int focusCeilin
     }
 
     /**
-     * Scales the count-based focus bounds by {@code areaRatio} for evaluation geometries
-     * whose bracket bands cover a different pixel count (for example 0.5625 at 1920x1080).
+    * Scales the count-based focus bounds by {@code areaRatio} for evaluation geometries
+     * whose bracket bands cover a different pixel count (for example 0.525 for the
+     * characterized 1920x1080 bracket-band geometry: 3192/6080 after integer rounding).
      * The interior bounds are absolute gray levels and stay unchanged.
      */
     public ControlThresholds scaled(double areaRatio) {
