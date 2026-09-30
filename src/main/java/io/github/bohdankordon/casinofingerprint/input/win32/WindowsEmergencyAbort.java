@@ -4,26 +4,20 @@ import com.sun.jna.platform.win32.User32;
 import io.github.bohdankordon.casinofingerprint.input.AbortSignal;
 
 /**
- * Production emergency abort: the high bit of {@code GetAsyncKeyState} for one configured
- * virtual key, polled (never hooked). The default is F12; the key stays configurable because
- * F12 may overlap platform screenshot bindings. Read-only key-state polling only.
+ * Production emergency abort: the high bit of {@code GetAsyncKeyState} for one explicitly
+ * configured virtual key, polled (never hooked). There is no default: the live CLI
+ * requires an explicit {@code --abort-key} (see {@code EmergencyAbortKey}) because the old
+ * F12 default proved to be a Steam screenshot shortcut in the real Stage 8C run.
+ * Read-only key-state polling only.
  *
  * <p>Windows-only: construction refuses on any other OS, and no code path here runs during
  * Linux CI (tests use a fake signal).
  */
 public final class WindowsEmergencyAbort implements AbortSignal {
-    /** Default abort key: F12 (0x7B). */
-    public static final int DEFAULT_ABORT_KEY = 0x7B;
-
     private final int virtualKey;
 
-    /** Abort on F12. */
-    public WindowsEmergencyAbort() {
-        this(DEFAULT_ABORT_KEY);
-    }
-
     /**
-     * @param virtualKey virtual-key code to poll, for example {@link #DEFAULT_ABORT_KEY}
+     * @param virtualKey virtual-key code to poll, from {@code EmergencyAbortKey#virtualKeyCode()}; required, no default
      */
     public WindowsEmergencyAbort(int virtualKey) {
         Win32Support.requireWindows("Emergency abort");

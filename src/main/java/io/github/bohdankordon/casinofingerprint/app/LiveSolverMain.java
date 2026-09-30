@@ -17,6 +17,7 @@ import io.github.bohdankordon.casinofingerprint.execution.SystemExecutionClock;
 import io.github.bohdankordon.casinofingerprint.execution.VerificationPolicy;
 import io.github.bohdankordon.casinofingerprint.gameplay.GameplayFixture;
 import io.github.bohdankordon.casinofingerprint.gameplay.GameplayLayout;
+import io.github.bohdankordon.casinofingerprint.input.EmergencyAbortKey;
 import io.github.bohdankordon.casinofingerprint.input.win32.WindowsEmergencyAbort;
 import io.github.bohdankordon.casinofingerprint.input.win32.WindowsForegroundTargetGuard;
 import io.github.bohdankordon.casinofingerprint.input.win32.WindowsSendInputSink;
@@ -32,6 +33,8 @@ import java.io.IOException;
 import java.io.PrintStream;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Objects;
+import java.util.Optional;
 import org.bytedeco.opencv.opencv_core.Mat;
 
 /**
@@ -40,16 +43,20 @@ import org.bytedeco.opencv.opencv_core.Mat;
  * <pre>
  * LiveSolverMain --list-monitors
  * LiveSolverMain [--monitor &lt;index&gt;] --watch --enable-input --target-exe &lt;name&gt;
- *     [--interval-ms &lt;ms&gt;] [--stable-frames &lt;n&gt;]
+ *     --abort-key &lt;name&gt; [--interval-ms &lt;ms&gt;] [--stable-frames &lt;n&gt;]
  * </pre>
  *
  * <p>Live input is strictly opt-in and Windows-only: without {@code --enable-input} plus an
- * explicit {@code --target-exe} the mode refuses to start, and on any non-Windows OS it
- * refuses as well. No input is ever sent merely because the program starts: taps happen only
- * after a NEW or still-pending ROUND_READY round with a validated plan passes the live visual
- * preflight (target executable in the foreground, abort key idle, selector visually on C0,
- * nothing selected) and the lifecycle claims the same observation. Any mismatch latches the
+ * explicit {@code --target-exe} plus an explicit {@code --abort-key} the mode refuses to
+ * start, and on any non-Windows OS it refuses as well. There is no default abort key. No
+ * input is ever sent merely because the program starts: taps happen only after a NEW or
+ * still-pending ROUND_READY round with a validated plan passes the live visual preflight
+ * (target executable in the foreground, abort key idle, selector visually on C0, nothing
+ * selected) and the lifecycle claims the same observation. Any mismatch latches the
  * execution and stops input until an explicit restart.
+ *
+ * <p>Production delivery is SCANCODE_BATCH (scan-code key-down plus key-up in one batch,
+ * no hold), the manually validated Stage 8C.2/8C.3 representation.
  *
  * <p>Exit codes: 0 when the run stopped cleanly (Ctrl+C), 2 for command-line errors, 3 when
  * the setup, capture or a latched execution failure ends the run.
@@ -125,9 +132,9 @@ public final class LiveSolverMain {
             printMonitors(out, detected, required);
             return EXIT_OK;
         }
-        if (!options.inputEnabled() || options.targetExecutable() == null) {
+        if (!options.inputEnabled() || options.targetExecutable() == null || options.abortKey() == null) {
             err.println("LIVE: REFUSED: live input requires --enable-input plus "
-                    + "--target-exe <name>: refusing to start");
+                    + "--target-exe <name> plus --abort-key <name>: refusing to start");
             return EXIT_USAGE;
         }
         if (!Win32Support.isWindows()) {
@@ -144,8 +151,10 @@ public final class LiveSolverMain {
             return EXIT_FAILURE;
         }
         out.println("LIVE INPUT ENABLED");
+        out.println(inputDeliveryLine());
         out.println("LIVE: target executable: " + options.targetExecutable());
-        out.println("LIVE: emergency abort: F12 (hold to stop input immediately)");
+        out.println(emergencyAbortLine(options.abortKey()));
+        abortConflictWarning(options.abortKey()).ifPresent(out::println);
         out.println("LIVE: layout  : " + GameplayFixture.LAYOUT_REL + " -> physical " + required);
         out.println("LIVE: monitor : " + monitor.describe());
         ReferenceFingerprintLibrary library;
@@ -164,7 +173,7 @@ public final class LiveSolverMain {
                     new LayoutControlReader(layout, ControlThresholds.PRODUCTION_1440P),
                     verificationCapture, options.targetExecutable(),
                     new WindowsSendInputSink(), new WindowsForegroundTargetGuard(),
-                    new WindowsEmergencyAbort(), new SystemExecutionClock(),
+                    new WindowsEmergencyAbort(options.abortKey().virtualKeyCode()), new SystemExecutionClock(),
                     VerificationPolicy.DEFAULT, options.stableFrames())) {
                 return runWatch(capture, orchestrator, options, out, err);
             }
@@ -172,6 +181,30 @@ public final class LiveSolverMain {
             err.println("LIVE: CAPTURE_ERROR: " + e.getMessage());
             return EXIT_FAILURE;
         }
+    }
+
+    /** Production delivery banner: the validated one-batch scan-code representation. Pure, no native call. */
+    static String inputDeliveryLine() {
+        return "LIVE: input delivery: SCANCODE_BATCH";
+    }
+
+    /** Emergency-abort banner naming the explicitly selected key. Pure, no native call. */
+    static String emergencyAbortLine(EmergencyAbortKey abortKey) {
+        Objects.requireNonNull(abortKey, "abortKey");
+        return "LIVE: emergency abort: " + abortKey.symbolicName() + " (hold to stop input immediately)";
+    }
+
+    /** Conflict warning for a selected abort key with a documented shortcut overlap. Pure, no native call. */
+    static Optional<String> abortConflictWarning(EmergencyAbortKey abortKey) {
+        Objects.requireNonNull(abortKey, "abortKey");
+        return abortKey.knownConflict().map(note -> "LIVE: WARNING: " + abortKey.symbolicName()
+                + " has a documented shortcut conflict (" + note + "); it was chosen explicitly, so check your own bindings");
+    }
+
+    /** Watch intro naming the explicitly selected abort key. Pure, no native call. */
+    static String watchIntroLine(EmergencyAbortKey abortKey) {
+        Objects.requireNonNull(abortKey, "abortKey");
+        return "LIVE: watching the desktop; press Ctrl+C to stop. " + abortKey.symbolicName() + " aborts input immediately.";
     }
 
     private static void printMonitors(PrintStream out, List<MonitorInfo> monitors,
@@ -189,8 +222,7 @@ public final class LiveSolverMain {
 
     private static int runWatch(ScreenCapture capture, LiveSolveOrchestrator orchestrator,
             LiveSolverOptions options, PrintStream out, PrintStream err) {
-        out.println("LIVE: watching the desktop; press Ctrl+C to stop. "
-                + "F12 aborts input immediately.");
+        out.println(watchIntroLine(options.abortKey()));
         out.println("LIVE: waiting for a supported capture of the physical layout frame...");
         String lastSignature = null;
         long frames = 0;

@@ -36,6 +36,7 @@ Stage 6C.1C characterizes the independent visual round-transition witness candid
 - `evaluation.recording.transition.witness`: Stage 6C.1C independent visual round-transition witness characterization - W0..W4 witness families measured on every full-rate frame against one frozen consumed-round content baseline per round, the same-round / transition / entry / exit populations, the rule and threshold sweep with worst-case separation margins, the counterfactual same-identity replay and the exact-visual-repeat control. Evaluation only, measurement only: no production transition witness, no lifecycle change, no input, no tuning and no production 1080p support.
 - `control`: Stage 7B production control-state detector over raw gameplay pixels (selector corner brackets plus tile-interior brightness, never normalized content) with calibrated fail-closed bounds.
 - `input` plus `input.win32`: Stage 7B gameplay input intentions (`GameControl`, `GameInputSink`, foreground-target guard, abort signal) with the Windows-only SendInput tap, foreground pinning and F12 abort poll isolated in `input.win32` (JNA, pinned).
+- `input` plus `input.win32`: Stage 7B gameplay input intentions (`GameControl`, `GameInputSink`, foreground-target guard, abort signal) with the Windows-only SendInput tap, foreground pinning and explicit abort-key poll isolated in `input.win32` (JNA, pinned; Stage 8C.4 requires an explicit abort-key, F12 is no longer a default).
 - `execution`: Stage 7B guarded action executor (same-frame preflight, same-observation lifecycle claim, per-action visual verification, PROCEED exactly once, latched fail-closed faults) with clock-free correctness plus `VerificationPolicy` bounds.
 - `orchestration` plus `app`: Stage 7B live wiring (`LiveSolveOrchestrator`, pending-round re-attempts, `LiveFrameResult`) and the separate opt-in live CLI (`LiveSolverMain`); `DryRunSolverMain` stays input-free.
 - `evaluation.recording.control`: Stage 7B control-state evaluation over both private recordings with the committed annotation-only CSV (evaluation only, no production dependency).
@@ -277,7 +278,13 @@ SELECT, an explicit 10..200 ms hold whose failure paths always still submit the 
 a REQUIRED explicitly configured abort key because F12 is a Steam screenshot shortcut. No
 characterization result is claimed yet: the user runs the manual matrix after review and
 merge. Stage 8C.2 scan-code characterization passed for arrows + SELECT. PROCEED/Tab validation remains pending. Production promotion remains blocked. Stage 8C.3 adds a dedicated double-opt-in Tab probe documented in docs/stage8c-proceed-characterization.md. Nothing was promoted to production, no production input path changed, BattlEye stays
-enabled and unchanged, no bypass technique exists, and Stage 8D is blocked.
+enabled and unchanged, no bypass technique exists, and Stage 8D is blocked. Stage 8C.4
+(docs/stage8c-production-promotion.md) promotes the validated SCANCODE_BATCH representation
+to production (all six controls, arrows extended, SELECT and PROCEED non-extended, one
+batch, no hold) and requires an explicit abort-key for live input and for the production
+smoke diagnostic. Stage 8C production promotion is implemented and pending the human
+production-backend smoke (UP plus SELECT through the actual promoted sink); Stage 8C is
+NOT complete and Stage 8D remains blocked until that smoke passes.
 
 ## Roadmap
 
@@ -302,7 +309,9 @@ enabled and unchanged, no bypass technique exists, and Stage 8D is blocked.
     planning and same-observation consumption, dry-run CLI, full-rate dry-run replay at 8 READY
     plus 8 executable plans plus 8 consumptions with zero blocked and zero desync; no input)
    - Stage 7B - guarded live input execution (complete: production control-state detector,
-     Windows SendInput backend with foreground pinning and F12 abort, per-action visual
+    - Stage 7B - guarded live input execution (complete: production control-state detector,
+     Windows SendInput backend with foreground pinning and explicit abort-key poll
+     (Stage 7B used F12; Stage 8C.4 requires an explicit abort-key), per-action visual
      verification, same-observation claim before the first tap, latched fail-closed faults,
      separate opt-in live CLI, 47/47 real-recording control-state evaluation, unchanged
      Stage 7A and witness replays; production 2560x1440 on Windows only; no live-game
@@ -317,9 +326,11 @@ enabled and unchanged, no bypass technique exists, and Stage 8D is blocked.
      negative-foreground and abort guards PASS with zero input, but GTA Enhanced showed
      no visible response to the production `VK_BATCH` `UP` and `SELECT` taps while the
      Notepad controls PASS, so input delivery remains UNRESOLVED. Stage 8C.2 adds the
-     diagnostic-only delivery characterization probe documented in
-     docs/stage8c-input-delivery-characterization.md, pending manual validation after
-     merge; no production promotion)
-   - Stage 8C.3 - promotion of an evidenced delivery semantics (NOT started; only after the
-     human-run matrix identifies a working mode)
-   - Stage 8D - end-to-end vault testing (BLOCKED until Stage 8C passes)
+   diagnostic-only delivery characterization probe documented in
+    docs/stage8c-input-delivery-characterization.md, pending manual validation after
+     merge; no production promotion. Stage 8C.4 (docs/stage8c-production-promotion.md)
+     promotes validated SCANCODE_BATCH to production with an explicit abort-key;
+     production promotion is implemented and pending the human production-backend smoke.)
+   - Stage 8C.3 - dedicated Tab probe plus Stage 8C.4 production promotion (Tab validated;
+     SCANCODE_BATCH promoted for all six controls; explicit abort-key; smoke pending)
+   - Stage 8D - end-to-end vault testing (BLOCKED until Stage 8C smoke passes)

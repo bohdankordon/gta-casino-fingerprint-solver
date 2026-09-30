@@ -10,7 +10,6 @@ import io.github.bohdankordon.casinofingerprint.input.GameControl;
 import io.github.bohdankordon.casinofingerprint.input.diagnostic.DiagnosticAbortKey;
 import io.github.bohdankordon.casinofingerprint.input.diagnostic.DiagnosticDeliveryPlan;
 import io.github.bohdankordon.casinofingerprint.input.diagnostic.DiagnosticInputDeliveryMode;
-import io.github.bohdankordon.casinofingerprint.input.win32.WindowsSendInputSink;
 import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.Test;
@@ -146,13 +145,13 @@ class InputDeliveryProbeOptionsTest {
     void noAllowedControlEverMapsToTab() {
         List<Integer> virtualKeys = new ArrayList<>();
         for (GameControl control : ALLOWED) {
-            assertEquals(WindowsSendInputSink.virtualKey(control),
+            assertEquals(historicalVirtualKey(control),
                     DiagnosticDeliveryPlan.forTap(control, DiagnosticInputDeliveryMode.VK_BATCH, 0)
                             .down().wVk(),
-                    control + " keeps the production mapping");
-            assertNotEquals(0x09, WindowsSendInputSink.virtualKey(control),
+                    control + " keeps the historical virtual-key mapping");
+            assertNotEquals(0x09, historicalVirtualKey(control),
                     control + " must never be Tab");
-            virtualKeys.add(WindowsSendInputSink.virtualKey(control));
+            virtualKeys.add(historicalVirtualKey(control));
         }
         assertEquals(5, virtualKeys.stream().distinct().count(), "five distinct keys");
     }
@@ -344,5 +343,16 @@ class InputDeliveryProbeOptionsTest {
         }
         args.addAll(List.of(extra));
         return InputDeliveryProbeOptions.parse(args.toArray(String[]::new));
+    }
+    /** Historical pre-promotion virtual-key baseline (Stage 8C.4 production is scan-code). */
+    private static int historicalVirtualKey(GameControl control) {
+        return switch (control) {
+            case UP -> 0x26;
+            case DOWN -> 0x28;
+            case LEFT -> 0x25;
+            case RIGHT -> 0x27;
+            case SELECT -> 0x0D;
+            case PROCEED -> throw new IllegalArgumentException("PROCEED has no virtual-key plan");
+        };
     }
 }

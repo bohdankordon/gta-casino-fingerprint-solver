@@ -59,7 +59,7 @@ class LiveSolverMainTest {
     void watchWithoutOptInRefusesBeforeTouchingAnything() {
         LiveSolverOptions options = new LiveSolverOptions(null,
                 LiveSolverOptions.Mode.WATCH, LiveSolverOptions.DEFAULT_INTERVAL_MILLIS,
-                LiveSolverOptions.DEFAULT_STABLE_FRAMES, false, null, false);
+                LiveSolverOptions.DEFAULT_STABLE_FRAMES, false, null, null, false);
         RecordingFactory factory = new RecordingFactory(FakeScreenCapture.create());
         ByteArrayOutputStream outBytes = new ByteArrayOutputStream();
         PrintStream out = new PrintStream(outBytes, true, StandardCharsets.UTF_8);
@@ -76,7 +76,8 @@ class LiveSolverMainTest {
     @Test
     void watchSetupFailuresAreLabelledLive() {
         LiveSolverOptions options = LiveSolverOptions.parse(
-                new String[] {"--watch", "--enable-input", "--target-exe", "GTA5.exe"});
+                new String[] {"--watch", "--enable-input", "--target-exe", "GTA5.exe",
+                        "--abort-key", "SCROLL_LOCK"});
         RecordingFactory factory = new RecordingFactory(FakeScreenCapture.create());
         ByteArrayOutputStream outBytes = new ByteArrayOutputStream();
         PrintStream out = new PrintStream(outBytes, true, StandardCharsets.UTF_8);
@@ -98,7 +99,8 @@ class LiveSolverMainTest {
             return;
         }
         LiveSolverOptions options = LiveSolverOptions.parse(
-                new String[] {"--watch", "--enable-input", "--target-exe", "GTA5.exe"});
+                new String[] {"--watch", "--enable-input", "--target-exe", "GTA5.exe",
+                        "--abort-key", "SCROLL_LOCK"});
         RecordingFactory factory = new RecordingFactory(FakeScreenCapture.create());
         ByteArrayOutputStream outBytes = new ByteArrayOutputStream();
         PrintStream out = new PrintStream(outBytes, true, StandardCharsets.UTF_8);

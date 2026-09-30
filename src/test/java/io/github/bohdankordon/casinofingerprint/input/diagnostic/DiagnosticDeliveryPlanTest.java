@@ -7,13 +7,13 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.bohdankordon.casinofingerprint.input.GameControl;
-import io.github.bohdankordon.casinofingerprint.input.win32.WindowsSendInputSink;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 
 /**
- * Stage 8C.2 pure delivery plans: the VK_BATCH plan is exactly the production baseline
- * representation, the scan-code plans pin the exact {@code wVk}/{@code wScan}/flags, the hold
+ * Stage 8C.2 pure delivery plans: the VK plans pin the historical pre-promotion virtual-key
+ * baseline (Stage 8C.4 production is SCANCODE_BATCH), the scan-code plans pin the exact
+ * {@code wVk}/{@code wScan}/flags, the hold
  * contract is enforced per mode, and PROCEED has no plan in any mode.
  */
 class DiagnosticDeliveryPlanTest {
@@ -30,17 +30,17 @@ class DiagnosticDeliveryPlanTest {
     }
 
     @Test
-    void vkBatchPlanIsExactlyTheProductionBaselineRepresentation() {
+    void vkBatchPlanPinsTheHistoricalVirtualKeyBaselineRepresentation() {
         for (GameControl control : ALLOWED) {
             DiagnosticDeliveryPlan plan = DiagnosticDeliveryPlan.forTap(control,
                     DiagnosticInputDeliveryMode.VK_BATCH, 0);
             assertTrue(plan.batched(), control + " is one batch");
             assertEquals(0, plan.holdMillis(), "BATCH modes carry no hold");
-            int productionVirtualKey = WindowsSendInputSink.virtualKey(control);
-            assertEquals(productionVirtualKey, plan.down().wVk(),
-                    control + " key-down must use the production virtual key");
-            assertEquals(productionVirtualKey, plan.up().wVk(),
-                    control + " key-up must use the production virtual key");
+            int historicalVirtualKey = historicalVirtualKey(control);
+            assertEquals(historicalVirtualKey, plan.down().wVk(),
+                    control + " key-down must use the historical virtual key");
+            assertEquals(historicalVirtualKey, plan.up().wVk(),
+                    control + " key-up must use the historical virtual key");
             assertEquals(0, plan.down().wScan(), control + " key-down wScan");
             assertEquals(0, plan.up().wScan(), control + " key-up wScan");
             assertEquals(0, plan.down().flags(), control + " key-down has no flags");
@@ -52,15 +52,15 @@ class DiagnosticDeliveryPlanTest {
     }
 
     @Test
-    void vkHoldPlanKeepsTheProductionVirtualKeysAndCarriesTheExplicitHold() {
+    void vkHoldPlanKeepsTheHistoricalVirtualKeysAndCarriesTheExplicitHold() {
         for (GameControl control : ALLOWED) {
             DiagnosticDeliveryPlan plan = DiagnosticDeliveryPlan.forTap(control,
                     DiagnosticInputDeliveryMode.VK_HOLD, 50);
             assertFalse(plan.batched(), control + " holds");
             assertEquals(50, plan.holdMillis(), control + " explicit hold");
-            assertEquals(WindowsSendInputSink.virtualKey(control), plan.down().wVk(),
+            assertEquals(historicalVirtualKey(control), plan.down().wVk(),
                     control + " key-down virtual key");
-            assertEquals(WindowsSendInputSink.virtualKey(control), plan.up().wVk(),
+            assertEquals(historicalVirtualKey(control), plan.up().wVk(),
                     control + " key-up virtual key");
             assertFalse(plan.down().usesScanCode(), control + " is not a scan-code plan");
             assertFalse(plan.down().extended(), control + " carries no extended bit");
@@ -201,5 +201,16 @@ class DiagnosticDeliveryPlanTest {
                 "a BATCH plan cannot carry a hold");
         assertEquals(50, new DiagnosticDeliveryPlan(DiagnosticInputDeliveryMode.VK_HOLD, down, up,
                 50).holdMillis(), "an explicit HOLD plan is valid");
+    }
+    /** Historical pre-promotion virtual-key baseline (Stage 8C.4 production is scan-code). */
+    private static int historicalVirtualKey(GameControl control) {
+        return switch (control) {
+            case UP -> 0x26;
+            case DOWN -> 0x28;
+            case LEFT -> 0x25;
+            case RIGHT -> 0x27;
+            case SELECT -> 0x0D;
+            case PROCEED -> throw new IllegalArgumentException("PROCEED has no virtual-key plan");
+        };
     }
 }

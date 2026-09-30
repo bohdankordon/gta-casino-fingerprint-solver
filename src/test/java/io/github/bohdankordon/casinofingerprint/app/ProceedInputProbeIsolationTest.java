@@ -163,7 +163,8 @@ class ProceedInputProbeIsolationTest {
     void generalDiagnosticStillRefusesProceed() {
         IllegalArgumentException error = assertThrows(IllegalArgumentException.class,
                 () -> InputDiagnosticOptions.parse(new String[] {"--enable-input",
-                        "--target-exe", "GTA5_Enhanced.exe", "--control", "PROCEED"}));
+                        "--target-exe", "GTA5_Enhanced.exe", "--control", "PROCEED",
+                        "--abort-key", "SCROLL_LOCK"}));
         assertTrue(error.getMessage().contains("PROCEED"), error.getMessage());
         assertTrue(error.getMessage().contains("Tab"), error.getMessage());
     }

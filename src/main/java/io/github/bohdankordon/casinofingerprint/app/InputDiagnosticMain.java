@@ -13,23 +13,25 @@ import java.util.function.BooleanSupplier;
 import java.util.function.Supplier;
 
 /**
- * Stage 8C.1 command-line entry point: one guarded gameplay key tap for manual validation of
- * the Stage 7B native input layer, and nothing else.
+ * Stage 8C command-line entry point: one guarded gameplay key tap for manual validation of
+ * the promoted Stage 8C.4 production scan-code backend, and nothing else.
  *
  * <pre>
  * InputDiagnosticMain --enable-input --target-exe &lt;exact.exe&gt;
- *     --control &lt;UP|DOWN|LEFT|RIGHT|SELECT&gt; [--countdown-seconds &lt;n&gt;]
+ *     --control &lt;UP|DOWN|LEFT|RIGHT|SELECT&gt; --abort-key &lt;name&gt; [--countdown-seconds &lt;n&gt;]
  * InputDiagnosticMain --help
  * </pre>
  *
  * <p>This tool is deliberately tiny and is NOT the solver: no recognition, no capture, no
  * lifecycle, no navigation plan and no automatic repetition. One invocation emits AT MOST ONE
- * complete tap, only after the explicit opt-in, the countdown, the F12 abort polls, the exact
- * executable foreground pin and the final pre-tap gates. On a non-Windows OS it refuses before
- * any native input backend is constructed. Exit codes: 0 tap sent (or help), 2 usage refusal,
- * 3 runtime refusal or input failure. An exit code of 3 does NOT by itself mean that no input
- * was sent: ordinary refusals happen before the tap and guarantee zero input, while an
- * INPUT ERROR follows the one allowed tap attempt and does not confirm complete delivery.
+ * complete scan-code tap through the actual production {@code WindowsSendInputSink}, only
+ * after the explicit opt-in, the explicit abort key, the countdown, the abort polls, the
+ * exact executable foreground pin and the final pre-tap gates. On a non-Windows OS it
+ * refuses before any native input backend is constructed. Exit codes: 0 tap sent (or help),
+ * 2 usage refusal, 3 runtime refusal or input failure. An exit code of 3 does NOT by itself
+ * mean that no input was sent: ordinary refusals happen before the tap and guarantee zero
+ * input, while an INPUT ERROR follows the one allowed tap attempt and does not confirm
+ * complete delivery.
  */
 public final class InputDiagnosticMain {
     static final int EXIT_OK = 0;
@@ -63,7 +65,7 @@ public final class InputDiagnosticMain {
             return;
         }
         int exit = run(options, System.out, System.err, Win32Support::isWindows, Thread::sleep,
-                InputDiagnosticMain::productionBackends);
+                () -> productionBackends(options));
         if (exit != EXIT_OK) {
             System.exit(exit);
         }
@@ -92,7 +94,8 @@ public final class InputDiagnosticMain {
         InputDiagnosticRequest request = new InputDiagnosticRequest(options.targetExecutable(),
                 options.control(), true, options.countdownSeconds());
         InputDiagnosticResult result = new SingleTapInputDiagnostic(natives.sink(),
-                natives.guard(), natives.abort(), sleeper, windows).run(request);
+                natives.guard(), natives.abort(), sleeper, windows,
+                options.abortKey().symbolicName()).run(request);
         if (result.sent()) {
             out.println("DIAGNOSTIC SENT exactly one " + options.control() + " tap to pinned "
                     + options.targetExecutable() + " target");
@@ -101,8 +104,6 @@ public final class InputDiagnosticMain {
             return EXIT_OK;
         }
         if (result.inputAttempted()) {
-            // Never claim zero input here: the one tap was attempted and may have been partially
-            // delivered, so the operator must treat the key as potentially delivered.
             err.println("DIAGNOSTIC " + result.status().label() + ": " + result.message());
             err.println("DIAGNOSTIC one tap was attempted but complete delivery was not"
                     + " confirmed; partial native input may have been delivered;"
@@ -111,7 +112,6 @@ public final class InputDiagnosticMain {
                     + " the current GTA state before any later manual attempt");
             return EXIT_REFUSED;
         }
-        // Every remaining status is a pre-tap refusal, so zero input is guaranteed here.
         err.println("DIAGNOSTIC REFUSED: " + result.status().label() + ": " + result.message());
         err.println("DIAGNOSTIC no input was sent; this invocation is over"
                 + " and nothing is retried automatically");
@@ -119,9 +119,9 @@ public final class InputDiagnosticMain {
     }
 
     /** Builds the production Windows backends: the diagnostic's only native input site. */
-    static Backends productionBackends() {
+    static Backends productionBackends(InputDiagnosticOptions options) {
         return new Backends(new WindowsSendInputSink(), new WindowsForegroundTargetGuard(),
-                new WindowsEmergencyAbort());
+                new WindowsEmergencyAbort(options.abortKey().virtualKeyCode()));
     }
 
     private static void printArmed(PrintStream out, InputDiagnosticOptions options) {
@@ -129,7 +129,10 @@ public final class InputDiagnosticMain {
         out.println("DIAGNOSTIC requested control: " + options.control());
         out.println("DIAGNOSTIC target executable: " + options.targetExecutable());
         out.println("DIAGNOSTIC exactly ONE tap maximum");
-        out.println("DIAGNOSTIC F12 aborts");
+        out.println("DIAGNOSTIC " + options.abortKey().symbolicName() + " aborts");
+        options.abortKey().knownConflict().ifPresent(note -> out.println("DIAGNOSTIC WARNING: "
+                + options.abortKey().symbolicName() + " has a documented shortcut conflict ("
+                + note + "); it was chosen explicitly, so check your own bindings"));
         out.println("DIAGNOSTIC switch to GTA now; countdown: " + options.countdownSeconds()
                 + " s before the foreground gates");
     }
