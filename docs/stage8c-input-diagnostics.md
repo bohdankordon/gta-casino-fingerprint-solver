@@ -255,3 +255,10 @@ the visible response.
 - Stage 8C is NOT complete.
 - Stage 8D (any end-to-end vault testing) remains blocked until the human-observed Stage 8C
   results pass.
+## Stage 8C.4 update: production promotion and explicit abort key
+
+Stage 8C.4 promotes SCANCODE_BATCH to production (WindowsSendInputSink) and requires an
+explicit abort-key for this diagnostic (option B for safety; F12 is no longer assumed).
+Post-merge smoke uses abort-key SCROLL_LOCK with target-exe GTA5_Enhanced.exe; see
+stage8c-production-promotion.md for the pending UP plus SELECT smoke. Stage 8C is still
+NOT complete and Stage 8D remains blocked until that smoke passes.

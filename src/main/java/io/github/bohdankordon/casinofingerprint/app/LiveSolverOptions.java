@@ -1,16 +1,21 @@
 package io.github.bohdankordon.casinofingerprint.app;
 
+import io.github.bohdankordon.casinofingerprint.input.EmergencyAbortKey;
+
 /**
  * Parsed command-line options of the guarded live solver: recognition plus verified gameplay
  * input on Windows only.
  *
  * <p>Live input stays strictly opt-in: without {@code --enable-input} (and without an explicit
- * {@code --target-exe}) the live mode refuses to start. Parsing is strict and pure like the
- * dry-run options: unknown options, missing values, contradictory modes and out-of-range
- * counts fail with an {@link IllegalArgumentException} before anything is captured.
+ * {@code --target-exe} plus an explicit {@code --abort-key}) the live mode refuses to start.
+ * There is no default abort key: F12 proved to be a Steam screenshot shortcut in the real
+ * Stage 8C run, so the user must name an unbound key after checking the Steam and GTA
+ * bindings. Parsing is strict and pure like the dry-run options: unknown options, missing
+ * values, contradictory modes and out-of-range counts fail with an
+ * {@link IllegalArgumentException} before anything is captured.
  */
 public record LiveSolverOptions(Integer monitorIndex, Mode mode, long intervalMillis,
-        int stableFrames, boolean inputEnabled, String targetExecutable, boolean help) {
+        int stableFrames, boolean inputEnabled, String targetExecutable, EmergencyAbortKey abortKey, boolean help) {
 
     /** What the live solver should do with the desktop. */
     public enum Mode {
@@ -32,6 +37,7 @@ public record LiveSolverOptions(Integer monitorIndex, Mode mode, long intervalMi
     public static final int MAX_STABLE_FRAMES = 100;
 
     /** @param monitorIndex optional capture monitor override */
+    /** @param abortKey explicitly configured emergency abort key; required for live input, null otherwise */
     public LiveSolverOptions {
         if (mode == null) {
             throw new IllegalArgumentException("mode must not be null");
@@ -58,6 +64,16 @@ public record LiveSolverOptions(Integer monitorIndex, Mode mode, long intervalMi
                 throw new IllegalArgumentException(
                         "--target-exe needs --enable-input: live input stays strictly opt-in");
             }
+            if (inputEnabled && abortKey == null) {
+                throw new IllegalArgumentException("--abort-key <" + EmergencyAbortKey.SYMBOLS
+                        + "> is required with --enable-input: the live solver never picks an emergency key"
+                        + " automatically, because F12 (the old default) is a Steam screenshot shortcut; check"
+                        + " your Steam and GTA bindings and name the unbound key you chose");
+            }
+            if (!inputEnabled && abortKey != null) {
+                throw new IllegalArgumentException(
+                        "--abort-key needs --enable-input: live input stays strictly opt-in");
+            }
         }
     }
 
@@ -73,6 +89,7 @@ public record LiveSolverOptions(Integer monitorIndex, Mode mode, long intervalMi
         boolean help = false;
         boolean inputEnabled = false;
         String targetExecutable = null;
+        String abortKeyName = null;
         Integer monitorIndex = null;
         long intervalMillis = DEFAULT_INTERVAL_MILLIS;
         int stableFrames = DEFAULT_STABLE_FRAMES;
@@ -87,12 +104,18 @@ public record LiveSolverOptions(Integer monitorIndex, Mode mode, long intervalMi
                 case "--interval-ms" -> intervalMillis = longValue(args, ++index, argument);
                 case "--stable-frames" -> stableFrames = intValue(args, ++index, argument);
                 case "--target-exe" -> targetExecutable = textValue(args, ++index, argument);
+                case "--abort-key" -> {
+                    if (abortKeyName != null) {
+                        throw new IllegalArgumentException("duplicate option --abort-key");
+                    }
+                    abortKeyName = textValue(args, ++index, argument);
+                }
                 default -> throw new IllegalArgumentException("unknown option " + argument);
             }
         }
         if (help) {
             return new LiveSolverOptions(null, Mode.HELP, DEFAULT_INTERVAL_MILLIS,
-                    DEFAULT_STABLE_FRAMES, false, null, true);
+                    DEFAULT_STABLE_FRAMES, false, null, null, true);
         }
         int modes = (listMonitors ? 1 : 0) + (watch ? 1 : 0);
         if (modes == 0) {
@@ -104,7 +127,7 @@ public record LiveSolverOptions(Integer monitorIndex, Mode mode, long intervalMi
         Mode mode = listMonitors ? Mode.LIST_MONITORS : Mode.WATCH;
         if (mode != Mode.WATCH && (intervalMillis != DEFAULT_INTERVAL_MILLIS
                 || stableFrames != DEFAULT_STABLE_FRAMES || inputEnabled
-                || targetExecutable != null)) {
+                || targetExecutable != null || abortKeyName != null)) {
             throw new IllegalArgumentException(
                     "--watch options are only valid with --watch");
         }
@@ -113,8 +136,21 @@ public record LiveSolverOptions(Integer monitorIndex, Mode mode, long intervalMi
                     "live input requires the explicit opt-in flag --enable-input "
                             + "plus --target-exe <name>: refusing to start");
         }
+        EmergencyAbortKey abortKey = null;
+        if (abortKeyName != null) {
+            abortKey = EmergencyAbortKey.parse(abortKeyName);
+        }
+        if (mode == Mode.WATCH && inputEnabled && abortKey == null) {
+            throw new IllegalArgumentException("--abort-key <" + EmergencyAbortKey.SYMBOLS
+                    + "> is required with --enable-input: the live solver never picks an emergency key"
+                    + " automatically, because F12 (the old default) is a Steam screenshot shortcut; check"
+                    + " your Steam and GTA bindings and name the unbound key you chose");
+        }
+        if (abortKey != null && !inputEnabled) {
+            throw new IllegalArgumentException("--abort-key needs --enable-input: live input stays strictly opt-in");
+        }
         return new LiveSolverOptions(monitorIndex, mode, intervalMillis, stableFrames,
-                inputEnabled, targetExecutable, false);
+                inputEnabled, targetExecutable, abortKey, false);
     }
 
     /** Command-line help text, also printed for usage errors. */
@@ -128,7 +164,7 @@ public record LiveSolverOptions(Integer monitorIndex, Mode mode, long intervalMi
                 + separator + separator
                 + "Usage: --list-monitors"
                 + separator
-                + "       [--monitor <index>] --watch --enable-input --target-exe <name>"
+                + "       [--monitor <index>] --watch --enable-input --target-exe <name> --abort-key <name>"
                 + separator
                 + "       [--interval-ms <ms>] [--stable-frames <n>]"
                 + separator + separator
@@ -142,7 +178,22 @@ public record LiveSolverOptions(Integer monitorIndex, Mode mode, long intervalMi
                 + separator
                 + "  --enable-input        explicit opt-in: without it live mode refuses to start"
                 + separator
-                + "  --target-exe <name>   exact foreground executable, e.g. GTA5.exe (required)"
+                + "  --target-exe <name>   exact foreground executable, e.g. GTA5_Enhanced.exe (required)"
+                + separator
+                + "  --abort-key <name>    REQUIRED emergency abort key; supported keys are "
+                + EmergencyAbortKey.SYMBOLS + ". No key is picked automatically: F12 is a Steam"
+                + separator
+                + "                        screenshot shortcut. Check your own Steam and GTA bindings first."
+                + separator
+                + "                        Documented conflicts: F1/F2/F3 Rockstar Editor shortcuts, F9/F10 GTA"
+                + separator
+                + "                        drop-weapon and drop-ammo defaults, F11 Ctrl+F11 Steam manual recording,"
+                + separator
+                + "                        F12 Steam screenshot (Ctrl+F12 Steam Game Recording marker). The list is"
+                + separator
+                + "                        not exhaustive; your bindings win. UP, DOWN, LEFT, RIGHT, ENTER and TAB"
+                + separator
+                + "                        can never be abort keys. Input delivery is SCANCODE_BATCH."
                 + separator
                 + "  --interval-ms <ms>    watch capture interval, default "
                 + DEFAULT_INTERVAL_MILLIS
@@ -154,7 +205,7 @@ public record LiveSolverOptions(Integer monitorIndex, Mode mode, long intervalMi
                 + separator
                 + "verified start (selector C0, nothing selected), and per-action visual"
                 + separator
-                + "confirmation. F12 is the emergency abort key. Any mismatch latches the"
+                + "confirmation. The configured --abort-key is the emergency abort key. Any mismatch latches the"
                 + separator
                 + "execution: no retry without an explicit restart." + separator;
     }

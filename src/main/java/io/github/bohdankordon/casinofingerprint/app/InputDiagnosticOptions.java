@@ -1,26 +1,29 @@
 package io.github.bohdankordon.casinofingerprint.app;
 
+import io.github.bohdankordon.casinofingerprint.input.EmergencyAbortKey;
 import io.github.bohdankordon.casinofingerprint.input.GameControl;
 
 /**
- * Parsed command-line options of the Stage 8C.1 single-tap input diagnostic.
+ * Parsed command-line options of the Stage 8C single-tap production-backend smoke diagnostic.
  *
  * <p>An instance exists only after the explicit {@code --enable-input} opt-in plus an exact
- * {@code --target-exe} and exactly one allowed control were given: without the opt-in, with a
- * missing value, with an unknown option, with a malformed countdown or with any spelling of
- * PROCEED, parsing throws and the CLI sends zero input. Parsing is pure: no native object and
- * no input backend is touched here.
+ * {@code --target-exe}, exactly one allowed control, an explicitly named
+ * {@code --abort-key} and a valid countdown. There is no default abort key: F12 proved to
+ * be a Steam screenshot shortcut in the real Stage 8C run, so the post-merge production
+ * smoke uses {@code --abort-key SCROLL_LOCK}. Parsing is pure: no native object and no
+ * input backend is touched here.
  *
  * <p>Allowed controls are the five Stage 8C controls {@code UP}, {@code DOWN}, {@code LEFT},
  * {@code RIGHT} and {@code SELECT}. There is deliberately no alias that could expose
  * {@link GameControl#PROCEED} (Tab).
  *
- * @param targetExecutable exact foreground executable file name, for example {@code GTA5.exe}
+ * @param targetExecutable exact foreground executable file name, for example {@code GTA5_Enhanced.exe}
  * @param control the single allowed control to tap; null only for {@code --help}
+ * @param abortKey the explicitly chosen emergency abort key; null only for {@code --help}
  * @param countdownSeconds seconds to switch to GTA before the foreground gates
  * @param help true when the invocation only asks for help
  */
-public record InputDiagnosticOptions(String targetExecutable, GameControl control,
+public record InputDiagnosticOptions(String targetExecutable, GameControl control, EmergencyAbortKey abortKey,
         int countdownSeconds, boolean help) {
 
     public InputDiagnosticOptions {
@@ -38,6 +41,12 @@ public record InputDiagnosticOptions(String targetExecutable, GameControl contro
                         "UNSUPPORTED CONTROL: PROCEED is forbidden in Stage 8C:"
                                 + " Tab is never sent by this diagnostic");
             }
+            if (abortKey == null) {
+                throw new IllegalArgumentException("--abort-key <" + EmergencyAbortKey.SYMBOLS
+                        + "> is required: this diagnostic never picks an emergency key automatically,"
+                        + " because F12 (the old default) is a Steam screenshot shortcut; check"
+                        + " your Steam and GTA bindings and name the unbound key you chose");
+            }
             if (countdownSeconds < InputDiagnosticRequest.MIN_COUNTDOWN_SECONDS
                     || countdownSeconds > InputDiagnosticRequest.MAX_COUNTDOWN_SECONDS) {
                 throw new IllegalArgumentException("--countdown-seconds must be between "
@@ -52,14 +61,15 @@ public record InputDiagnosticOptions(String targetExecutable, GameControl contro
      * Parses {@code args}.
      *
      * @throws IllegalArgumentException for unknown options, duplicate options, missing values,
-     *         malformed or out-of-range numbers, a missing opt-in and any control that is not
-     *         one of the five allowed Stage 8C controls
+     *         malformed or out-of-range numbers, a missing opt-in, a missing abort key and any
+     *         control that is not one of the five allowed Stage 8C controls
      */
     public static InputDiagnosticOptions parse(String[] args) {
         boolean enableInput = false;
         boolean help = false;
         String targetExecutable = null;
         String controlName = null;
+        String abortKeyName = null;
         Integer countdownSeconds = null;
         for (int index = 0; index < args.length; index++) {
             String argument = args[index];
@@ -78,6 +88,12 @@ public record InputDiagnosticOptions(String targetExecutable, GameControl contro
                     }
                     controlName = textValue(args, ++index, argument);
                 }
+                case "--abort-key" -> {
+                    if (abortKeyName != null) {
+                        throw new IllegalArgumentException("duplicate option --abort-key");
+                    }
+                    abortKeyName = textValue(args, ++index, argument);
+                }
                 case "--countdown-seconds" -> {
                     if (countdownSeconds != null) {
                         throw new IllegalArgumentException(
@@ -89,7 +105,7 @@ public record InputDiagnosticOptions(String targetExecutable, GameControl contro
             }
         }
         if (help) {
-            return new InputDiagnosticOptions(null, null,
+            return new InputDiagnosticOptions(null, null, null,
                     InputDiagnosticRequest.DEFAULT_COUNTDOWN_SECONDS, true);
         }
         if (!enableInput) {
@@ -103,27 +119,36 @@ public record InputDiagnosticOptions(String targetExecutable, GameControl contro
         if (controlName == null) {
             throw new IllegalArgumentException("--control <UP|DOWN|LEFT|RIGHT|SELECT> is required");
         }
+        if (abortKeyName == null) {
+            throw new IllegalArgumentException("--abort-key <" + EmergencyAbortKey.SYMBOLS
+                    + "> is required: this diagnostic never picks an emergency key automatically,"
+                    + " because F12 (the old default) is a Steam screenshot shortcut; check your"
+                    + " Steam and GTA bindings and name the unbound key you chose");
+        }
         GameControl control = parseControl(controlName);
+        EmergencyAbortKey abortKey = EmergencyAbortKey.parse(abortKeyName);
         int countdown = countdownSeconds == null
                 ? InputDiagnosticRequest.DEFAULT_COUNTDOWN_SECONDS
                 : countdownSeconds;
-        return new InputDiagnosticOptions(targetExecutable, control, countdown, false);
+        return new InputDiagnosticOptions(targetExecutable, control, abortKey, countdown, false);
     }
 
     /** Command-line help text, also printed for usage errors. */
     public static String usage() {
         String separator = System.lineSeparator();
-        return "Guarded single-tap input diagnostic (Stage 8C.1, Windows only): it sends AT MOST"
+        return "Guarded single-tap production-backend smoke diagnostic (Stage 8C.4, Windows only): it sends AT MOST"
                 + separator
                 + "ONE harmless gameplay key tap to GTA, after a countdown and after strict"
                 + separator
                 + "foreground and emergency-abort gates. It performs no recognition, no"
                 + separator
                 + "navigation, no lifecycle work and no repetition: one invocation is one tap."
+                + separator
+                + "Production delivery is SCANCODE_BATCH (scan-code key-down plus key-up in one batch)."
                 + separator + separator
                 + "Usage: --enable-input --target-exe <exact.exe>"
                 + separator
-                + "       --control <UP|DOWN|LEFT|RIGHT|SELECT> [--countdown-seconds <n>]"
+                + "       --control <UP|DOWN|LEFT|RIGHT|SELECT> --abort-key <name> [--countdown-seconds <n>]"
                 + separator
                 + "       --help"
                 + separator + separator
@@ -131,13 +156,18 @@ public record InputDiagnosticOptions(String targetExecutable, GameControl contro
                 + separator
                 + "  --target-exe <exact.exe>        exact foreground executable file name,"
                 + separator
-                + "                                  e.g. GTA5.exe (not a path)"
+                + "                                  e.g. GTA5_Enhanced.exe (not a path)"
                 + separator
                 + "  --control <name>                exactly one of UP, DOWN, LEFT, RIGHT, SELECT"
                 + separator
                 + "                                  (arrow keys and Enter); PROCEED/Tab is"
                 + separator
                 + "                                  forbidden in Stage 8C and sends nothing"
+                + separator
+                + "  --abort-key <name>              REQUIRED emergency abort key; supported keys are "
+                + EmergencyAbortKey.SYMBOLS + ". No key is picked automatically."
+                + separator
+                + "                                  Check your own Steam and GTA bindings first."
                 + separator
                 + "  --countdown-seconds <n>         seconds to switch to GTA, "
                 + InputDiagnosticRequest.MIN_COUNTDOWN_SECONDS + ".."
@@ -146,7 +176,7 @@ public record InputDiagnosticOptions(String targetExecutable, GameControl contro
                 + separator
                 + "  --help                          print this help"
                 + separator + separator
-                + "F12 aborts during the countdown and immediately before the tap; after an"
+                + "The configured --abort-key aborts during the countdown and immediately before the tap; after an"
                 + separator
                 + "abort the invocation ends and nothing is retried. Exit codes: 0 tap sent"
                 + separator

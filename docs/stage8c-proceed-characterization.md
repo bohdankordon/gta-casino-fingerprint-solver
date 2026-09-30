@@ -147,3 +147,10 @@ Stage 8D remains blocked until the human-observed Tab result passes. No producti
 changed in this stage: `WindowsSendInputSink`, `LiveSolverMain`,
 `LiveSolverOptions`, `GuardedPlanExecutor`, `VerificationPolicy`,
 navigation, recognition and capture are untouched. This PR is diagnostic-only.
+## Stage 8C.4 update: Tab validated and promoted
+
+The dedicated Tab probe passed (SENT, key-down yes, key-up yes, exactly one pause-map
+Point Of Interest action). Production now sends PROCEED as scan 0x0F non-extended in the
+same one-batch shape, pinned by tests. Stage 8C production promotion is implemented but
+the production-backend smoke is still pending; Stage 8D remains blocked. See
+stage8c-production-promotion.md.

@@ -17,9 +17,9 @@ import java.util.function.Supplier;
 import org.junit.jupiter.api.Test;
 
 /**
- * Stage 8C.1 CLI against fake backends: the non-Windows refusal happens before any native
- * object exists, the armed banner is explicit, and every outcome is labelled. No test here
- * constructs a Windows backend or emits OS input.
+ * Stage 8C CLI against fake backends: the non-Windows refusal happens before any native
+ * object exists, the armed banner names the explicitly configured abort key, and every
+ * outcome is labelled. No test here constructs a Windows backend or emits OS input.
  */
 class InputDiagnosticMainTest {
     @Test
@@ -47,7 +47,7 @@ class InputDiagnosticMainTest {
         assertTrue(out.contains("DIAGNOSTIC requested control: UP"), "Control: " + out);
         assertTrue(out.contains("DIAGNOSTIC target executable: GTA5.exe"), "Target: " + out);
         assertTrue(out.contains("DIAGNOSTIC exactly ONE tap maximum"), "One tap: " + out);
-        assertTrue(out.contains("DIAGNOSTIC F12 aborts"), "Abort key: " + out);
+        assertTrue(out.contains("DIAGNOSTIC SCROLL_LOCK aborts"), "Abort key: " + out);
         assertTrue(out.contains("DIAGNOSTIC switch to GTA now"), "Countdown hint: " + out);
         assertTrue(out.contains("DIAGNOSTIC SENT exactly one UP tap to pinned GTA5.exe target"),
                 "Sent line: " + out);
@@ -71,6 +71,20 @@ class InputDiagnosticMainTest {
                 "Refusal label: " + streams.errText());
         assertTrue(streams.errText().contains("no input was sent"), streams.errText());
         assertTrue(backends.sink.taps().isEmpty(), "Zero taps");
+    }
+    @Test
+    void abortedMessageNamesTheExplicitlyConfiguredAbortKey() {
+        Backends backends = new Backends();
+        backends.abort = FakeAbortSignal.immediate();
+        Streams streams = new Streams();
+        InputDiagnosticOptions scrollLock = InputDiagnosticOptions.parse(new String[] {"--enable-input",
+                "--target-exe", "GTA5.exe", "--control", "UP", "--abort-key", "SCROLL_LOCK",
+                "--countdown-seconds", "1"});
+        int exit = InputDiagnosticMain.run(scrollLock, streams.out, streams.err, () -> true,
+                new FakeInputDiagnosticSleeper(), backends);
+        assertEquals(3, exit, "Exit code");
+        assertTrue(streams.errText().contains("SCROLL_LOCK is active"), streams.errText());
+        assertTrue(!streams.errText().contains("F12 is active"), "F12 never silently assumed: " + streams.errText());
     }
 
     @Test
@@ -180,7 +194,8 @@ class InputDiagnosticMainTest {
 
     private static InputDiagnosticOptions options(String control) {
         return InputDiagnosticOptions.parse(new String[] {"--enable-input", "--target-exe",
-                "GTA5.exe", "--control", control, "--countdown-seconds", "1"});
+                "GTA5.exe", "--control", control, "--abort-key", "SCROLL_LOCK",
+                "--countdown-seconds", "1"});
     }
 
     /** Fake backend set recording construction: zero calls off Windows. */

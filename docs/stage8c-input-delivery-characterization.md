@@ -282,4 +282,13 @@ Windows application.
   conclusion about the other three modes.
 - Nothing is promoted to production; Stage 8C.3 (promotion of an evidenced semantics)
   does not exist yet and Stage 8D stays blocked until the human-observed results pass.
+## Stage 8C.4 update: characterization complete, SCANCODE_BATCH promoted
+
+Manual characterization is now complete: SCANCODE_BATCH passes for UP DOWN LEFT RIGHT
+SELECT, SCANCODE_HOLD 50 ms passes for UP and SELECT, SCROLL_LOCK aborts with zero input,
+and the Tab probe passes (see stage8c-proceed-characterization.md). The scan-code
+representation is the material difference; a hold is NOT required, so only SCANCODE_BATCH
+is promoted to production. VK_BATCH (virtual-key) is now the historical pre-promotion
+baseline, not current production. Production smoke through the actual promoted sink is
+still pending; Stage 8D remains blocked. See stage8c-production-promotion.md.
 
