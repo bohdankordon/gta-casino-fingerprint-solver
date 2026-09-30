@@ -24,7 +24,8 @@ import java.util.function.BooleanSupplier;
  *   <li>require Windows;</li>
  *   <li>require the explicit input opt-in;</li>
  *   <li>refuse PROCEED (Tab is never sent in Stage 8C);</li>
- *   <li>count down while polling the F12 abort, never sending input;</li>
+ *   <li>count down while polling the configured abort key (F12 by default), never sending
+ *       input;</li>
  *   <li>abort must be idle;</li>
  *   <li>pin the foreground target of the exact executable;</li>
  *   <li>abort must be idle;</li>
@@ -49,21 +50,39 @@ public final class SingleTapInputDiagnostic {
     private final AbortSignal abort;
     private final InputDiagnosticSleeper sleeper;
     private final BooleanSupplier windows;
+    private final String abortKeyLabel;
+
+    /** The Stage 8C.1 default abort-key label: F12. */
+    public static final String DEFAULT_ABORT_KEY_LABEL = "F12";
 
     /**
      * @param sink one-tap input backend; production is the Windows native tap backend, tests fake it
      * @param guard foreground-target guard; production is the Windows guard, tests fake it
-     * @param abort emergency abort signal; production polls F12, tests fake it
+     * @param abort emergency abort signal; production polls the configured abort key, tests fake it
      * @param sleeper countdown sleeper; production is {@code Thread::sleep}, tests fake it
      * @param windows OS gate; production is {@code Win32Support::isWindows}, tests fake it
      */
     public SingleTapInputDiagnostic(GameInputSink sink, ForegroundTargetGuard guard,
             AbortSignal abort, InputDiagnosticSleeper sleeper, BooleanSupplier windows) {
+        this(sink, guard, abort, sleeper, windows, DEFAULT_ABORT_KEY_LABEL);
+    }
+
+    /**
+     * The same ordered gates with an explicit abort-key label in the refusal messages: the
+     * Stage 8C.1 CLI keeps the F12 default, while the Stage 8C.2 characterization probe passes
+     * the key the user explicitly configured with {@code --abort-key}.
+     *
+     * @param abortKeyLabel symbolic name printed in ABORTED messages; required
+     */
+    public SingleTapInputDiagnostic(GameInputSink sink, ForegroundTargetGuard guard,
+            AbortSignal abort, InputDiagnosticSleeper sleeper, BooleanSupplier windows,
+            String abortKeyLabel) {
         this.sink = Objects.requireNonNull(sink, "sink");
         this.guard = Objects.requireNonNull(guard, "guard");
         this.abort = Objects.requireNonNull(abort, "abort");
         this.sleeper = Objects.requireNonNull(sleeper, "sleeper");
         this.windows = Objects.requireNonNull(windows, "windows");
+        this.abortKeyLabel = Objects.requireNonNull(abortKeyLabel, "abortKeyLabel");
     }
 
     /**
@@ -97,18 +116,18 @@ public final class SingleTapInputDiagnostic {
         // 4. the abort key must be idle before the countdown starts.
         if (abort.isActive()) {
             return refusal(InputDiagnosticStatus.ABORTED,
-                    "F12 is active: no input was sent and the invocation is over");
+                    abortKeyLabel + " is active: no input was sent and the invocation is over");
         }
         // 5. count down while polling the abort key; never send input during the countdown.
         if (!runCountdown(request.countdownSeconds())) {
             return refusal(InputDiagnosticStatus.ABORTED,
-                    "F12 became active during the countdown (or the wait was interrupted):"
-                            + " no input was sent");
+                    abortKeyLabel + " became active during the countdown (or the wait was"
+                            + " interrupted): no input was sent");
         }
         // 6. abort idle.
         if (abort.isActive()) {
             return refusal(InputDiagnosticStatus.ABORTED,
-                    "F12 is active: no input was sent and the invocation is over");
+                    abortKeyLabel + " is active: no input was sent and the invocation is over");
         }
         // 7. pin the current foreground target of the exact executable.
         Optional<ForegroundTarget> pinned = guard.pin(request.targetExecutable());
@@ -120,7 +139,7 @@ public final class SingleTapInputDiagnostic {
         // 8. abort idle.
         if (abort.isActive()) {
             return refusal(InputDiagnosticStatus.ABORTED,
-                    "F12 is active: no input was sent and the invocation is over");
+                    abortKeyLabel + " is active: no input was sent and the invocation is over");
         }
         // 9. the pin must still own the foreground window.
         if (!guard.isPinned(pinned.get())) {
@@ -131,7 +150,7 @@ public final class SingleTapInputDiagnostic {
         // 10. abort idle AGAIN immediately before the tap: no sleep follows these gates.
         if (abort.isActive()) {
             return refusal(InputDiagnosticStatus.ABORTED,
-                    "F12 is active: no input was sent and the invocation is over");
+                    abortKeyLabel + " is active: no input was sent and the invocation is over");
         }
         // 11. exactly one tap, no retry, no second tap. A failure here is reported as
         // INPUT_ERROR, which must never be described as "no input was sent": the attempt

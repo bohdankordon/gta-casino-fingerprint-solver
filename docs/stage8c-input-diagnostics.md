@@ -9,9 +9,14 @@ lifecycle work, no navigation planning and no automatic repetition. It exists so
 keyboard layer can be observed in the real game, by a human, before any end-to-end vault
 run is attempted.
 
-Nothing in Stage 8C.1 has been validated against real GTA input yet: this document
-describes the implementation and the manual procedure the user performs after review and
-merge. No real tap has been sent during implementation or testing.
+Real manual evidence now exists for Stage 8C.1: the negative foreground test (A) and the
+abort test (B) PASS with zero input, while the production `WindowsSendInputSink` batch
+produced no visible GTA Enhanced reaction for `UP` and `SELECT` and the same backend
+worked in Notepad. See
+[stage8c-input-delivery-characterization.md](stage8c-input-delivery-characterization.md)
+for the recorded evidence, the unresolved delivery question and the Stage 8C.2
+characterization probe. No real tap was sent during implementation or testing of this
+stage.
 
 ## Prerequisite: Stage 8B capture validation (complete)
 
