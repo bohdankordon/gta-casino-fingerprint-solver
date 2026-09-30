@@ -22,6 +22,20 @@ function Fail([string]$Message, [int]$Code = 2) {
     Write-Error $Message
     exit $Code
 }
+# Runs a native command, teeing all output to a log, and returns the native exit code.
+# Stderr text from the build (for example expected OpenCV warnings inside unit tests)
+# must never become a terminating script error, so $ErrorActionPreference is relaxed
+# only for the duration of the call. Callers decide success from the returned code.
+function Invoke-Native([string]$FilePath, [string[]]$Arguments, [string]$LogPath) {
+    $previous = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        & $FilePath @Arguments 2>&1 | Tee-Object -FilePath $LogPath
+        return $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $previous
+    }
+}
 
 if (-not (Test-Path ".\mvnw.cmd")) { Fail "Not a repository root: mvnw.cmd not found." }
 if (-not (Test-Path ".\fixtures\gameplay\layout\representative-2560x1440.csv")) { Fail "Not a repository root: stable 1440p layout missing." }
@@ -65,10 +79,8 @@ Write-Output "Running clean verify (rebuilds target/classes from scratch)..."
 Write-Output "Temporary verify log: $tempVerifyLog"
 $verifyExit = 1
 try {
-    & .\mvnw.cmd -B -ntp clean verify 2>&1 | Tee-Object -FilePath $tempVerifyLog
-    # $LASTEXITCODE is mvnw.cmd's native exit code: Tee-Object is a cmdlet and does not
-    # overwrite it, but capture it immediately, before any other native command runs.
-    $verifyExit = $LASTEXITCODE
+    # Invoke-Native returns mvnw.cmd's own exit code (Tee-Object success never replaces it).
+    $verifyExit = Invoke-Native ".\mvnw.cmd" @("-B", "-ntp", "clean", "verify") $tempVerifyLog
 } finally {
     New-Item -ItemType Directory -Force -Path $runDir | Out-Null
     if (Test-Path -LiteralPath $tempVerifyLog) {
@@ -81,8 +93,8 @@ if ($verifyExit -ne 0) {
 }
 Write-Output "clean verify passed. Log preserved at $verifyLog."
 Write-Output "Listing monitors (input-free, no opt-in needed)..."
-& .\mvnw.cmd -B -ntp -q compile exec:java "-Dexec.mainClass=io.github.bohdankordon.casinofingerprint.app.LiveSolverMain" "-Dexec.args=--list-monitors" 2>&1 | Tee-Object -FilePath $monitorsLog
-if ($LASTEXITCODE -ne 0) { Fail "Monitor listing FAILED. See $monitorsLog." 3 }
+$monitorsExit = Invoke-Native ".\mvnw.cmd" @("-B", "-ntp", "-q", "compile", "exec:java", "-Dexec.mainClass=io.github.bohdankordon.casinofingerprint.app.LiveSolverMain", "-Dexec.args=--list-monitors") $monitorsLog
+if ($monitorsExit -ne 0) { Fail "Monitor listing FAILED (exit $monitorsExit). See $monitorsLog." 3 }
 $modeName = "ListMonitors"
 if ($RecognitionOnly) { $modeName = "RecognitionOnly" }
 if ($Live) { $modeName = "Live" }
@@ -116,14 +128,14 @@ if ($RecognitionOnly) {
     $execArgs = "--monitor $Monitor $kind --enable-experimental-1080p"
     Write-Output "Recognition-only preflight (NO input will be sent):"
     Write-Output "LiveRecognitionMain $execArgs"
-    & .\mvnw.cmd -B -ntp -q compile exec:java "-Dexec.mainClass=io.github.bohdankordon.casinofingerprint.app.LiveRecognitionMain" "-Dexec.args=$execArgs" 2>&1 | Tee-Object -FilePath $runLog
-    Write-Output "Exit: $LASTEXITCODE. Log saved to $runLog. No input was sent."
-    exit $LASTEXITCODE
+    $recognitionExit = Invoke-Native ".\mvnw.cmd" @("-B", "-ntp", "-q", "compile", "exec:java", "-Dexec.mainClass=io.github.bohdankordon.casinofingerprint.app.LiveRecognitionMain", "-Dexec.args=$execArgs") $runLog
+    Write-Output "Exit: $recognitionExit. Log saved to $runLog. No input was sent."
+    exit $recognitionExit
 }
 $execArgs = "--monitor $Monitor --watch --enable-input --enable-experimental-1080p --target-exe $TargetExe --abort-key $AbortKey --interval-ms $IntervalMs --stable-frames $StableFrames"
 Write-Output "EXPERIMENTAL 1080p live solver with REAL input:"
 Write-Output "LiveSolverMain $execArgs"
 Write-Output "Emergency abort: hold $AbortKey. Ctrl+C stops the watcher itself."
-& .\mvnw.cmd -B -ntp -q compile exec:java "-Dexec.mainClass=io.github.bohdankordon.casinofingerprint.app.LiveSolverMain" "-Dexec.args=$execArgs" 2>&1 | Tee-Object -FilePath $runLog
-Write-Output "Exit: $LASTEXITCODE. Log saved to $runLog."
-exit $LASTEXITCODE
+$liveExit = Invoke-Native ".\mvnw.cmd" @("-B", "-ntp", "-q", "compile", "exec:java", "-Dexec.mainClass=io.github.bohdankordon.casinofingerprint.app.LiveSolverMain", "-Dexec.args=$execArgs") $runLog
+Write-Output "Exit: $liveExit. Log saved to $runLog."
+exit $liveExit
