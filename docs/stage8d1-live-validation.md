@@ -37,7 +37,15 @@ Stage 8D had to prove the production path end to end on the stable profile:
 - no duplicate replay of a consumed round
 - fail-closed safety on any mismatch, abort, or loss of focus
 
-All of the above were exercised in the run recorded here on 2560x1440.
+The run directly exercised the normal guarded success path through capture,
+recognition, planning, scan-code input, per-action visual confirmation,
+four selections, one PROCEED, round transitions, consumed-round suppression,
+and multi-door persistence.
+
+No mismatch, abort, or focus-loss failure occurred during this run, so those
+fail-closed branches were not re-exercised here; they retain their earlier
+automated and Stage 8 safety evidence.
+
 See execution tables below for the per-round and aggregate proof.
 
 ## Test environment
@@ -203,6 +211,8 @@ GTA V Enhanced Borderless at 2560x1440, commit
 with the same solver process, all FP_1 through FP_4 represented,
 29 verified navigation taps, 24 verified selections, 6 PROCEED actions,
 6 acknowledgements, zero faults, zero aborts, and zero observed wrong actions.
+
+No fail-closed fault branch was triggered in this successful Stage 8D.1 run.
 
 What this does not claim:
 
