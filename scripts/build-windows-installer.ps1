@@ -502,9 +502,6 @@ Write-Note ('FlatLaf version: ' + $FlatLafVersion + ' (core artifact only)')
 # Step 7: run the full Stage 9A build from this commit
 # ---------------------------------------------------------------------------
 Write-Step 'Run the Stage 9A application-image build'
-Remove-WithinTarget $Stage9BDir
-New-Item -ItemType Directory -Path $JpackageInputDir -Force | Out-Null
-New-Item -ItemType Directory -Path $SmokeDir -Force | Out-Null
 $stage9AScript = Join-Path $ScriptDir 'build-windows-app-image.ps1'
 $stage9AHost = 'powershell.exe'
 $pwshCommand = Get-Command pwsh.exe -ErrorAction SilentlyContinue
@@ -546,6 +543,9 @@ if ($stage9ATests) {
 # Step 8: stage the jpackage input solely from the fresh Stage 9A image
 # ---------------------------------------------------------------------------
 Write-Step 'Stage the jpackage input from the fresh Stage 9A image'
+Remove-WithinTarget $Stage9BDir
+New-Item -ItemType Directory -Path $JpackageInputDir -Force | Out-Null
+New-Item -ItemType Directory -Path $SmokeDir -Force | Out-Null
 $stage9AAppDir = Join-Path $Stage9ADir 'app'
 $stage9ALibDir = Join-Path $stage9AAppDir 'lib'
 $projectJars = @(Get-ChildItem -LiteralPath $stage9AAppDir -File -Filter 'gta-casino-fingerprint-solver-*.jar')
