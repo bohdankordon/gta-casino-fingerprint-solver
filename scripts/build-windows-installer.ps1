@@ -609,7 +609,7 @@ Remove-WithinTarget $JpackageTempAppImage
 Remove-WithinTarget $JpackageAppImage
 $javaOptionsValue = '-D' + $AppRootProperty + '=$APPDIR'
 $appImageArgs = @('--type', 'app-image', '--verbose', '--dest', $Stage9BDir, '--name', $ProductName, '--app-version', $AppVersion, '--vendor', $Vendor, '--description', 'Casino fingerprint solver operator for GTA V Enhanced (2560x1440)', '--copyright', $Vendor, '--input', $JpackageInputDir, '--main-jar', $mainJarName, '--main-class', $MainClass, '--runtime-image', (Join-Path $Stage9ADir 'runtime'), '--java-options', $javaOptionsValue, '--temp', $JpackageTempAppImage)
-Invoke-Tool -Label 'jpackage app-image' -FilePath $jpackageExe -Arguments $appImageArgs | Out-Null
+Invoke-Tool -Label 'jpackage app-image' -FilePath $jpackageExe -Arguments $appImageArgs -WorkingDirectory $Stage9BDir | Out-Null
 if (-not (Test-Path -LiteralPath $JpackageAppImage)) {
     Fail ('jpackage did not produce the app-image directory: ' + $JpackageAppImage)
 }
@@ -758,7 +758,7 @@ Write-Step 'Build the EXE installer from the validated app-image'
 Remove-WithinTarget $JpackageTempExe
 Remove-WithinTarget $InstallerDir
 $installerArgs = @('--type', 'exe', '--verbose', '--dest', $InstallerDir, '--name', $ProductName, '--app-version', $AppVersion, '--vendor', $Vendor, '--description', 'Casino fingerprint solver operator for GTA V Enhanced (2560x1440)', '--copyright', $Vendor, '--app-image', $JpackageAppImage, '--win-per-user-install', '--win-menu', '--win-menu-group', $MenuGroup, '--win-upgrade-uuid', $upgradeUuid, '--temp', $JpackageTempExe)
-Invoke-Tool -Label 'jpackage exe installer' -FilePath $jpackageExe -Arguments $installerArgs | Out-Null
+Invoke-Tool -Label 'jpackage exe installer' -FilePath $jpackageExe -Arguments $installerArgs -WorkingDirectory $Stage9BDir | Out-Null
 $installerName = $ProductName + '-' + $AppVersion + '.exe'
 $installerPath = Join-Path $InstallerDir $installerName
 if (-not (Test-Path -LiteralPath $installerPath)) {
