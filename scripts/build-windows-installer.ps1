@@ -649,7 +649,7 @@ if (-not ($cfgLines -contains $expectedPropertyLine)) {
 }
 Write-Note ('launcher application root: -D' + $AppRootProperty + '=$APPDIR (documented jpackage macro)')
 $cfgClasspath = @($cfgLines | Where-Object { $_.StartsWith('app.classpath=') } | ForEach-Object { $_.Substring('app.classpath='.Length) })
-$cfgJars = @($cfgClasspath | ForEach-Object { ForwardSlash($_).Split('/')[-1] } | Sort-Object -Unique)
+$cfgJars = @($cfgClasspath | ForEach-Object { (ForwardSlash($_)).Split('/')[-1] } | Sort-Object -Unique)
 $stagedJarNames = @(@($mainJarName) + @($stage9ALibJars | ForEach-Object { $_.Name }) | Sort-Object -Unique)
 $missingFromClasspath = @($stagedJarNames | Where-Object { $cfgJars -notcontains $_ })
 $extraOnClasspath = @($cfgJars | Where-Object { $stagedJarNames -notcontains $_ })
