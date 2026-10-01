@@ -12,10 +12,10 @@ import java.nio.file.Path;
  * root explicitly through a project-specific system property:
  *
  * <pre>
- * -Dgta.casino.solver.appRoot=APPDIR/app
+ * -Dgta.casino.solver.appRoot=$APPDIR
  * </pre>
  *
- * <p>(APPDIR is the documented jpackage placeholder for the installed application
+ * <p>($APPDIR is the documented jpackage placeholder for the installed application
  * payload directory; see docs/windows-installer.md.)
  *
  * <p>Contract:
