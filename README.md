@@ -79,6 +79,24 @@ packaged monitor-listing smoke. The image is the deterministic input for the Sta
 installer; no installer, no release automation and no code signing exist yet. See
 [docs/windows-packaging.md](docs/windows-packaging.md).
 
+## Windows installer (Stage 9B)
+
+The Stage 9A application image can be turned into a normal per-user Windows EXE installer with a desktop operator UI (Swing plus FlatLaf) using the Stage 9B installer build. The installer bundles a private Eclipse Temurin 21 runtime, needs no system Java, registers a conventional uninstall entry and a Start Menu shortcut, and starts DISARMED with zero input. Building it needs the Temurin 21 JDK plus WiX 3.14 build tooling on the build machine (both validated, never installed by the script) and an interactive desktop session. The installer is unsigned (SmartScreen may warn); releases are not published anywhere yet. See [docs/windows-installer.md](docs/windows-installer.md).
+
+```powershell
+.\scripts\build-windows-installer.ps1
+```
+
+Operator flow after installing the EXE:
+
+1. launch GTA Casino Fingerprint Solver from the Start Menu;
+2. verify or select the supported 2560x1440 monitor;
+3. verify the GTA5_Enhanced.exe target executable;
+4. explicitly select an emergency abort key;
+5. press ARM and START LIVE INPUT and review the confirmation;
+6. press ARM LIVE INPUT to start verified live input;
+7. hold the physical emergency key if input must stop immediately.
+
 ## Matching
 
 Stage 3 matching is documented in [docs/structural-matching.md](docs/structural-matching.md): the chosen algorithm, the approaches that were measured and rejected, the score semantics, the translation tolerance and the current representative-fixture results.
