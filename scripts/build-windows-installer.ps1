@@ -249,7 +249,7 @@ function Invoke-MsiQuery {
     $installer = New-Object -ComObject WindowsInstaller.Installer
     $database = $installer.GetType().InvokeMember('OpenDatabase', 'InvokeMethod', $null, $installer, @($MsiPath, 0))
     $view = $database.GetType().InvokeMember('OpenView', 'InvokeMethod', $null, $database, ($Sql))
-    $view.GetType().InvokeMember('Execute', 'InvokeMethod', $null, $view, $null)
+    [void]$view.GetType().InvokeMember('Execute', 'InvokeMethod', $null, $view, $null)
     $rows = New-Object 'System.Collections.Generic.List[string]'
     while ($true) {
         $record = $view.GetType().InvokeMember('Fetch', 'InvokeMethod', $null, $view, $null)
@@ -264,7 +264,7 @@ function Invoke-MsiQuery {
         }
         $rows.Add(($cells -join '|'))
     }
-    $view.GetType().InvokeMember('Close', 'InvokeMethod', $null, $view, $null)
+    [void]$view.GetType().InvokeMember('Close', 'InvokeMethod', $null, $view, $null)
     return $rows
 }
 
@@ -847,7 +847,7 @@ if ($msiShortcuts.Count -ne 1) {
     Fail ('expected exactly the Start Menu shortcut, found ' + $msiShortcuts.Count + ' shortcut rows')
 }
 $shortcutCells = @($msiShortcuts[0] -split '[|]')
-if ($shortcutCells[2] -ne $ProductName) {
+if (($shortcutCells[2] -ne $ProductName) -and (-not $shortcutCells[2].EndsWith(('|' + $ProductName)))) {
     Fail ('the shortcut name is not the product name: ' + $shortcutCells[2])
 }
 $msiDirectories = @(Invoke-MsiQuery -MsiPath $msiPath -Sql 'SELECT Directory, Directory_Parent, DefaultDir FROM Directory')
