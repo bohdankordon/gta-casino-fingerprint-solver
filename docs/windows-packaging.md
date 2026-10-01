@@ -143,12 +143,14 @@ target/dist/app-image/
     run-app-image.cmd        launcher: sets cwd to this directory and uses runtime/bin/java.exe
 ```
 
-Measured on the Stage 9A build machine: 212 files and 486,746,341 bytes (464.2 MB) uncompressed, of
-which 415.1 MB are the staged dependency jars and 46.7 MB are the private runtime. The dependency size
-is dominated by opencv-platform, which pulls JavaCPP, OpenCV and OpenBLAS natives for every supported
-platform; the Windows x64 subset alone is about 82 MB. Stage 9A deliberately does not trim that set,
-because the classifier split has not been proven safe for native loading yet. Trimming is a later
-packaging optimization candidate, not a Stage 9A goal.
+Measured on the Stage 9A build machine: 212 files, about 464 MB uncompressed, of which 415.1 MB are the
+staged dependency jars and 46.7 MB are the private runtime. The exact byte total moves by a few bytes
+between builds because BUILD-INFO.txt records the build timestamp.
+
+The dependency size is dominated by opencv-platform, which pulls JavaCPP, OpenCV and OpenBLAS natives
+for every supported platform; the Windows x64 subset alone is about 82 MB. Stage 9A deliberately does
+not trim that set, because the classifier split has not been proven safe for native loading yet.
+Trimming is a later packaging optimization candidate, not a Stage 9A goal.
 
 ## Runtime data audit
 
@@ -241,4 +243,3 @@ proves for the image root. Stage 9B must also keep the private-runtime policy (n
 or JAVA_HOME changes), must produce a normal Windows uninstall, and must re-run input-free packaged
 smoke tests against the installed application. Only after that does a signing step become meaningful,
 and only then should release publication be automated.
-
