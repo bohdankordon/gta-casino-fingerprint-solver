@@ -125,8 +125,20 @@ function Remove-WithinTarget([string]$Path) {
         Fail ('refusing to delete a path outside the repository target directory: ' + $full)
     }
     if (Test-Path -LiteralPath $full) {
-        [System.IO.Directory]::Delete($full, $true)
-    }
+        foreach ($item in @(Get-ChildItem -LiteralPath $full -Recurse -Force)) {
+            try { $item.Attributes = 'Normal' } catch { }
+        }
+        $deleteAttempts = 0
+        while ($true) {
+            try {
+                [System.IO.Directory]::Delete($full, $true)
+                break
+            } catch {
+                $deleteAttempts++
+                if ($deleteAttempts -ge 5) { throw }
+                Start-Sleep -Seconds 2
+            }
+        }    }
 }
 
 function Invoke-Tool {
