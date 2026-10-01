@@ -119,17 +119,20 @@ public final class OperatorSessionController {
     /**
      * Window-close policy while a session is active.
      *
-     * @return true when the window may dispose immediately (nothing armed);
-     *         false when close requested orderly shutdown and disposal must wait
-     *         for the terminal state
+     * @return true when the window may dispose immediately (DISARMED or a terminal
+     *         state); false while the worker still owns shutdown (ARMED_WATCHING
+     *         or STOPPING). A repeated close during STOPPING keeps waiting without
+     *         triggering another stop transition.
      */
     public boolean onWindowClosing() {
         synchronized (lock) {
-            if (state == OperatorSessionState.ARMED_WATCHING) {
-                closeRequested = true;
-            } else {
+            if (state == OperatorSessionState.STOPPING) {
+                return false;
+            }
+            if (state != OperatorSessionState.ARMED_WATCHING) {
                 return true;
             }
+            closeRequested = true;
         }
         requestStop();
         return false;

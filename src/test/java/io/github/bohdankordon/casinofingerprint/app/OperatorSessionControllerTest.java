@@ -131,6 +131,25 @@ class OperatorSessionControllerTest {
         assertTrue(controller.isCloseReady(), "Disposal is safe after the worker ends");
     }
 
+    @Test
+    void repeatedCloseDuringStoppingNeverDisposesEarly() throws Exception {
+        BlockingRunner runner = new BlockingRunner(
+                new LiveSessionRunner.SessionOutcome(0, false));
+        RecordingListener listener = new RecordingListener();
+        OperatorSessionController controller = new OperatorSessionController(
+                runner, Runnable::run, listener);
+        controller.startSession(CONFIG, Path.of("approot"), silent(), silent());
+        assertTrue(runner.started.await(5, TimeUnit.SECONDS), "Worker starts");
+        assertFalse(controller.onWindowClosing(), "First close in ARMED_WATCHING waits");
+        assertEquals(OperatorSessionState.STOPPING, controller.state());
+        assertFalse(controller.onWindowClosing(), "Second close while STOPPING still waits");
+        assertEquals(OperatorSessionState.STOPPING, controller.state());
+        assertFalse(controller.isCloseReady(), "Worker still owns shutdown");
+        runner.release.countDown();
+        assertTerminal(OperatorSessionState.STOPPED, controller, listener);
+        assertTrue(controller.isCloseReady(), "Only the terminal state allows disposal");
+    }
+
     private static void assertTerminal(OperatorSessionState expected,
             OperatorSessionController controller, RecordingListener listener) {
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);

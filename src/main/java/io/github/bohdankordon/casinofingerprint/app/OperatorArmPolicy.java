@@ -85,6 +85,22 @@ public final class OperatorArmPolicy {
     }
 
     /**
+     * Combo-box selection index for a refreshed monitor list: the position of the
+     * unique supported monitor, or -1 (no selection) when zero or several monitors
+     * match. The UI applies this unconditionally so a repopulated combo never keeps
+     * an implicit first-item selection the operator did not choose.
+     */
+    public static int refreshSelectionIndex(List<MonitorInfo> monitors) {
+        Objects.requireNonNull(monitors, "monitors");
+        List<MonitorInfo> matching = MonitorSelector.matchingPhysicalResolution(monitors,
+                new Resolution(REQUIRED_WIDTH, REQUIRED_HEIGHT));
+        if (matching.size() == 1) {
+            return monitors.indexOf(matching.get(0));
+        }
+        return -1;
+    }
+
+    /**
      * Immediate warning text for a selected abort key with a documented shortcut
      * conflict, or empty when the key documents none. Existing warnings are surfaced,
      * never suppressed.

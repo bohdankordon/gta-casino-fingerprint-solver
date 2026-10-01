@@ -88,7 +88,7 @@ public final class WindowsOperatorMain extends JFrame {
     private JButton openLogsButton;
     private JTextArea logArea;
     private Timer logTimer;
-    private int shownLogLines;
+    private long logCursor;
 
     /** Production entry point wiring the real desktop backends. */
     public static void main(String[] args) {
@@ -421,14 +421,15 @@ public final class WindowsOperatorMain extends JFrame {
         for (MonitorInfo info : detected) {
             monitorCombo.addItem(new MonitorOption(info));
         }
-        Optional<MonitorInfo> preselected = OperatorArmPolicy.preselectCandidate(detected);
-        if (preselected.isPresent()) {
-            for (int index = 0; index < monitorCombo.getItemCount(); index++) {
-                if (monitorCombo.getItemAt(index).info.equals(preselected.get())) {
-                    monitorCombo.setSelectedIndex(index);
-                    break;
-                }
-            }
+        // Explicit selection only: a unique supported monitor preselects, otherwise the
+        // refreshed combo intentionally holds no selection (index -1) so ARM stays
+        // ineligible until the operator chooses. Never rely on the default first-item
+        // selection of a repopulated combo box.
+        int selected = OperatorArmPolicy.refreshSelectionIndex(detected);
+        if (selected < 0) {
+            monitorCombo.setSelectedItem(null);
+        } else {
+            monitorCombo.setSelectedIndex(selected);
         }
         updateMonitorDetails();
     }
@@ -548,7 +549,7 @@ public final class WindowsOperatorMain extends JFrame {
         this.logModel = model;
         this.logBridge = bridge;
         this.sessionLogFile = logFile;
-        this.shownLogLines = 0;
+        this.logCursor = 0;
         logPathLabel.setText(logFile.toAbsolutePath().toString());
         writeSessionHeader(bridge.printStream(), monitor, target, abortKey);
         OperatorSessionController started = new OperatorSessionController(
@@ -595,22 +596,30 @@ public final class WindowsOperatorMain extends JFrame {
     }
 
     private void onCloseRequested() {
-        if (controller != null && controller.state().isArmed()) {
-            EmergencyAbortKey abortKey = selectedAbortKey();
-            String immediate = abortKey == null ? "the configured emergency abort key"
-                    : abortKey.symbolicName();
-            JOptionPane.showMessageDialog(this,
-                    "Closing the window requests orderly solver shutdown and does not"
-                            + " leave background input running." + System.lineSeparator()
-                            + "Hold " + immediate + " for the immediate input stop.",
-                    "GTA Casino Fingerprint Solver - stopping",
-                    JOptionPane.INFORMATION_MESSAGE);
-            closeRequestedWhileArmed = true;
-            boolean mayDispose = controller.onWindowClosing();
-            if (mayDispose) {
-                dispose();
+        if (controller != null) {
+            OperatorSessionState current = controller.state();
+            if (current == OperatorSessionState.ARMED_WATCHING) {
+                EmergencyAbortKey abortKey = selectedAbortKey();
+                String immediate = abortKey == null ? "the configured emergency abort key"
+                        : abortKey.symbolicName();
+                JOptionPane.showMessageDialog(this,
+                        "Closing the window requests orderly solver shutdown and does not"
+                                + " leave background input running." + System.lineSeparator()
+                                + "Hold " + immediate + " for the immediate input stop.",
+                        "GTA Casino Fingerprint Solver - stopping",
+                        JOptionPane.INFORMATION_MESSAGE);
+                closeRequestedWhileArmed = true;
+                if (controller.onWindowClosing()) {
+                    dispose();
+                }
+                return;
             }
-            return;
+            if (current == OperatorSessionState.STOPPING) {
+                // Shutdown is already pending: keep the STOPPING state visible with
+                // no repeated dialog and no early dispose.
+                controller.onWindowClosing();
+                return;
+            }
         }
         dispose();
     }
@@ -656,25 +665,36 @@ public final class WindowsOperatorMain extends JFrame {
         if (logModel == null || logArea == null) {
             return;
         }
-        List<String> lines = logModel.snapshot();
-        StringBuilder pending = new StringBuilder();
-        for (int index = shownLogLines; index < lines.size(); index++) {
-            pending.append(lines.get(index)).append(System.lineSeparator());
+        BoundedLogModel.LogBatch batch = logModel.entriesSince(logCursor);
+        logCursor = batch.nextCursor();
+        if (!batch.resynchronized() && batch.lines().isEmpty()) {
+            return;
         }
-        shownLogLines = lines.size();
-        if (pending.length() > 0) {
-            logArea.append(pending.toString());
-            int total = logArea.getLineCount();
-            if (total > BoundedLogModel.MAX_LINES + 200) {
-                try {
-                    int start = logArea.getLineStartOffset(total - BoundedLogModel.MAX_LINES);
-                    logArea.replaceRange("", 0, start);
-                } catch (javax.swing.text.BadLocationException ignored) {
-                    // Trimming is best effort; the model stays the bounded source.
-                }
+        if (batch.resynchronized()) {
+            // The view fell more than one retained window behind: rebuild from the
+            // newest retained lines instead of replaying a stale prefix.
+            StringBuilder rebuilt = new StringBuilder();
+            for (String line : batch.lines()) {
+                rebuilt.append(line).append(System.lineSeparator());
             }
-            logArea.setCaretPosition(logArea.getDocument().getLength());
+            logArea.setText(rebuilt.toString());
+        } else {
+            StringBuilder pending = new StringBuilder();
+            for (String line : batch.lines()) {
+                pending.append(line).append(System.lineSeparator());
+            }
+            logArea.append(pending.toString());
         }
+        int total = logArea.getLineCount();
+        if (total > BoundedLogModel.MAX_LINES + 200) {
+            try {
+                int start = logArea.getLineStartOffset(total - BoundedLogModel.MAX_LINES);
+                logArea.replaceRange("", 0, start);
+            } catch (javax.swing.text.BadLocationException ignored) {
+                // Trimming is best effort; the model stays the bounded source.
+            }
+        }
+        logArea.setCaretPosition(logArea.getDocument().getLength());
     }
 
     private void openLogsFolder() {

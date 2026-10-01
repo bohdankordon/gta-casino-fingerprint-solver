@@ -115,6 +115,34 @@ class OperatorArmPolicyTest {
                 OperatorArmPolicy.DEFAULT_TARGET_EXECUTABLE);
     }
 
+    @Test
+    void uniqueSupportedMonitorSelectsItsComboIndex() {
+        assertEquals(0, OperatorArmPolicy.refreshSelectionIndex(
+                List.of(SUPPORTED, UNSUPPORTED)));
+        assertEquals(1, OperatorArmPolicy.refreshSelectionIndex(
+                List.of(UNSUPPORTED, SUPPORTED)));
+    }
+
+    @Test
+    void severalSupportedMonitorsLeaveComboUnselected() {
+        assertEquals(-1, OperatorArmPolicy.refreshSelectionIndex(
+                List.of(SUPPORTED, SECOND_SUPPORTED)));
+    }
+
+    @Test
+    void zeroSupportedMonitorsLeaveComboUnselected() {
+        assertEquals(-1, OperatorArmPolicy.refreshSelectionIndex(
+                List.of(UNSUPPORTED)));
+        assertEquals(-1, OperatorArmPolicy.refreshSelectionIndex(List.of()));
+    }
+
+    @Test
+    void emptySelectionKeepsArmIneligible() {
+        OperatorArmPolicy.Eligibility eligibility = OperatorArmPolicy.check(
+                null, "GTA5_Enhanced.exe", EmergencyAbortKey.F4, false);
+        assertFalse(eligibility.allowed());
+    }
+
     private static MonitorInfo monitor(int index, boolean primary, int physicalWidth,
             int physicalHeight) {
         return new MonitorInfo(index, "DISPLAY-" + (index + 1), primary,

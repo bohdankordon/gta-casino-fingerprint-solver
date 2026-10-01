@@ -87,6 +87,27 @@ class OperatorLogBridgeTest {
     }
 
     @Test
+    void consumerReceivesNewestLinesAfterCapWhileDiskKeepsAll() throws IOException {
+        BoundedLogModel model = new BoundedLogModel();
+        Path log = temporary.resolve("session.log");
+        int total = BoundedLogModel.MAX_LINES + 250;
+        try (OperatorLogBridge bridge = new OperatorLogBridge(log, model)) {
+            for (int index = 0; index < total; index++) {
+                bridge.emit("line-" + index);
+            }
+        }
+        List<String> disk = Files.readAllLines(log, StandardCharsets.UTF_8);
+        assertEquals(total, disk.size());
+        assertEquals("line-0", disk.get(0));
+        assertEquals("line-" + (total - 1), disk.get(disk.size() - 1));
+        BoundedLogModel.LogBatch batch = model.entriesSince(total - 100);
+        assertEquals(100, batch.lines().size());
+        assertEquals("line-" + (total - 100), batch.lines().get(0));
+        assertEquals("line-" + (total - 1), batch.lines().get(99));
+        assertTrue(!batch.resynchronized());
+    }
+
+    @Test
     void closeIsIdempotentAndEmittingAfterCloseFails() throws IOException {
         BoundedLogModel model = new BoundedLogModel();
         OperatorLogBridge bridge =
