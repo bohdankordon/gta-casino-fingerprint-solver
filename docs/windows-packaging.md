@@ -16,7 +16,8 @@ copied.
   outside any Java installed on the machine.
 - The target machine needs Windows x64 only: no Java, no Maven, no Git, no OpenCV and no JNA
   installation.
-- The image is deterministic and reproducible from one exact git commit and one exact JDK build.
+- The image is deterministic and reproducible from one exact git commit and one exact JDK build:
+  the build refuses to start unless the Git worktree is completely clean.
 - Nothing tracked in the repository is modified by a packaging build; every artifact lands below the
   ignored target/ directory.
 
@@ -78,6 +79,9 @@ argument. On the Stage 9A build machine the jlink image contains 148 files and 4
 ## Build prerequisites
 
 - Windows x64
+- a completely clean Git worktree: git status --porcelain must be empty, so the recorded Git SHA
+  identifies the committed sources and runtime data (ignored build and local-data artifacts do not
+  block a build)
 - an interactive Windows desktop session (the packaged monitor-listing smoke enumerates displays)
 - Eclipse Temurin JDK 21 x64, installed separately by the developer:
 
@@ -108,8 +112,9 @@ Optional parameters: -PackagingJdk <path> selects the packaging JDK explicitly, 
 The script performs, in order:
 
 1. Windows x64 check.
-2. Worktree check, exact git SHA and branch record, required input check, and the reference manifest
-   contract check (20 crops, every asset present).
+2. Clean-worktree gate: git status --porcelain must be empty, so the recorded git SHA and branch
+   identify the committed sources and data. Then the required inputs are checked and the reference
+   manifest contract (20 crops, every asset present) is verified.
 3. Packaging JDK check: Java 21, Temurin vendor, all packaging tools present.
 4. mvnw.cmd -B -ntp clean verify package, with a test baseline gate (at least 859 tests, zero
    failures, zero errors).
@@ -123,6 +128,23 @@ The script performs, in order:
 12. Final assertion that the tracked worktree state is unchanged by the build.
 
 Diagnostics are written to target/stage9a/: build.log, one log per smoke test, and the printed summary.
+
+## Provenance and the clean worktree gate
+
+Packaging requires a completely clean Git worktree. The build refuses dirty or uncommitted state
+before compilation, before jlink and before any packaging work: the gate runs right after the exact
+git SHA and branch are recorded, and it fails with the offending git status --porcelain entries plus
+instructions to commit or remove them.
+
+The reason is that Maven compiles directly from the working tree and the packaging step copies the
+runtime data directly from the working tree. Without the gate, an uncommitted change to a Java source,
+pom.xml, dataset/reference, dataset/layout or fixtures/gameplay/layout could end up inside the image
+while BUILD-INFO.txt still recorded the commit SHA only. With the gate, the recorded Git SHA uniquely
+identifies the committed source and data tree that the image was built from.
+
+Ignored content (target/ and local-data/) does not appear in git status --porcelain and therefore never
+blocks a legitimate build. The script never restores, resets, cleans or stashes anything; cleaning up
+is always a deliberate developer action.
 
 ## Application image structure
 

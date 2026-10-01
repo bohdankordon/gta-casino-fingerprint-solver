@@ -15,7 +15,9 @@
             run-app-image.cmd
 
     The script refuses to run anywhere except Windows x64, refuses a packaging JDK that
-    is not Eclipse Temurin 21, builds the runtime with jlink, asserts that the image
+    is not Eclipse Temurin 21, refuses a worktree that is not completely clean (so the Git
+    SHA recorded in BUILD-INFO.txt always identifies the exact committed sources and
+    runtime data that went into the image), builds the runtime with jlink, asserts that the image
     contains no repository metadata, private evidence, recordings, test material or
     experimental 1080p content, and then proves with the bundled runtime alone (PATH
     without any java.exe, JAVA_HOME pointing nowhere) that the image starts, loads
@@ -296,8 +298,17 @@ $gitStatusBefore = (Invoke-Tool -Label 'git status --porcelain' -FilePath 'git' 
 Write-Note ('git SHA: ' + $gitSha)
 Write-Note ('git branch: ' + $gitBranch)
 if ($gitStatusBefore) {
-    Write-Note 'note: the worktree has uncommitted changes at build start; they are recorded but never packaged'
+    Write-Host '    dirty worktree entries reported by git status --porcelain:' -ForegroundColor Yellow
+    Add-Log 'dirty worktree entries reported by git status --porcelain:'
+    foreach ($entry in (Split-Lines $gitStatusBefore)) {
+        if ($entry.Trim()) {
+            Write-Host ('      ' + $entry) -ForegroundColor Yellow
+            Add-Log ('      ' + $entry)
+        }
+    }
+    Fail ('packaging requires a completely clean Git worktree, but git status --porcelain reports the entries above. The build compiles and copies files straight from the working tree while BUILD-INFO.txt records only the committed Git SHA ' + $gitSha + ', so uncommitted sources or runtime data would silently make the packaged image differ from that commit. Commit the changes, or remove the untracked files, and run the build again. This script never restores, resets, cleans or stashes your work.')
 }
+Write-Note 'worktree is clean: the recorded Git SHA identifies every packaged source and data file'
 $requiredInputs = @('pom.xml', 'mvnw.cmd', 'src/main/java', 'packaging/app-image/run-app-image.cmd') + $RuntimeDataFiles + $RuntimeDataTrees
 foreach ($relative in $requiredInputs) {
     $candidate = Join-Path $RepoRoot $relative
@@ -509,8 +520,8 @@ Write-Note ('launcher: ' + $LauncherName + ' (line endings normalized to CRLF fo
 # ---------------------------------------------------------------------------
 Write-Step 'Write BUILD-INFO.txt and packaging metadata'
 $buildTimestamp = [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ')
+# The clean-worktree gate above guarantees this state: a dirty worktree never reaches this point.
 $worktreeState = 'clean'
-if ($gitStatusBefore) { $worktreeState = 'has uncommitted changes (recorded, not packaged)' }
 $buildInfo = New-Object 'System.Collections.Generic.List[string]'
 $buildInfo.Add('Product:         ' + $ProductName)
 $buildInfo.Add('Project version: ' + $projectVersion)
@@ -656,12 +667,12 @@ if (-not $KeepRelocationCopy) {
 # ---------------------------------------------------------------------------
 # Step 14: tracked files untouched, then the final summary
 # ---------------------------------------------------------------------------
-Write-Step 'Verify that no tracked file was modified'
+Write-Step 'Verify that the worktree is still clean'
 $gitStatusAfter = (Invoke-Tool -Label 'git status --porcelain (after)' -FilePath 'git' -Arguments @('-C', $RepoRoot, 'status', '--porcelain')).Output.Trim()
-if ($gitStatusAfter -ne $gitStatusBefore) {
-    Fail ('running this script changed the tracked worktree state. Before: [' + $gitStatusBefore + '] After: [' + $gitStatusAfter + ']')
+if ($gitStatusAfter) {
+    Fail ('running this script changed the worktree state, which would invalidate the image provenance. git status --porcelain now reports: [' + $gitStatusAfter + ']')
 }
-Write-Note 'tracked worktree state unchanged by the build'
+Write-Note 'worktree state unchanged by the build: still clean'
 if ($env:_JAVA_OPTIONS -or $env:JAVA_TOOL_OPTIONS) {
     Write-Note 'warning: _JAVA_OPTIONS or JAVA_TOOL_OPTIONS is set in this shell and could affect Java runs outside this script'
 }
