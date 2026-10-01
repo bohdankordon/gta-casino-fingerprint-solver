@@ -10,9 +10,9 @@
     EXE installer from the validated app-image and inspects the installer statically
     (MSI tables, upgrade identity, shortcut inventory) without executing it.
 
-    The installer itself is never launched by this script: running it would start
-    the interactive setup wizard, which is the documented human step. Install and
-    uninstall validation stay pending until a human runs the wizard.
+    The installer itself is never launched by this script. Install and uninstall
+    validation use the generated MSI with documented msiexec switches; the
+    interactive EXE wizard itself remains unexercised until Stage 9D qualification.
 
     Every generated artifact lives below the ignored target/ directory, so running
     this script must not modify a tracked file. It never installs Java or WiX and
@@ -394,12 +394,12 @@ $jpackageVersion = (Invoke-Tool -Label 'jpackage --version' -FilePath $jpackageE
 if (-not $jpackageVersion.StartsWith($RequiredJdkMajor.ToString() + '.')) {
     Fail ('jpackage from the packaging JDK reports an unexpected version: ' + $jpackageVersion)
 }
-try {
-    $jdkArch = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()
-} catch {
-    $jdkArch = $env:PROCESSOR_ARCHITECTURE
+$javaOsArch = Get-JavaSetting $settingsOutput 'os.arch'
+$acceptedArch = 'amd64', 'x86_64', 'x64'
+if ($acceptedArch -notcontains $javaOsArch) {
+    Fail ('Stage 9B requires an x64 packaging JDK, but ' + $javaExe + ' reports os.arch=' + $javaOsArch + '. OS or process architecture is never used for this gate.')
 }
-Write-Note ('packaging JDK: ' + $javaVendor + ' ' + $javaVendorVersion + ' (' + $jdkArch + ')')
+Write-Note ('packaging JDK: ' + $javaVendor + ' ' + $javaVendorVersion + ' (' + $javaOsArch + ')')
 Write-Note ('java.runtime.version: ' + $javaRuntimeVersion)
 Write-Note ('jpackage version: ' + $jpackageVersion)
 Write-Note ('JDK resolved from: ' + $jdkSource)
@@ -930,7 +930,7 @@ $summary.Add('Git branch:                ' + $gitBranch)
 $summary.Add('Git worktree:              clean')
 $summary.Add('Stable profile:            ' + $StableProfile)
 $summary.Add('Input delivery:            SCANCODE_BATCH, strictly opt-in (startup sends no input)')
-$summary.Add('Packaging JDK:             Eclipse Temurin ' + $RequiredJdkMajor + ' (' + $jdkArch + ')')
+$summary.Add('Packaging JDK:             Eclipse Temurin ' + $RequiredJdkMajor + ' (' + $javaOsArch + ')')
 $summary.Add('                           java.runtime.version = ' + $javaRuntimeVersion)
 $summary.Add('jpackage version:          ' + $jpackageVersion)
 $summary.Add('WiX version:               ' + $wixVersion + ' (build-time only, never bundled)')
@@ -952,7 +952,7 @@ foreach ($line in $summary) {
     Write-Host ('  ' + $line)
 }
 Write-Host ''
-Write-Host 'Human step still required: install and uninstall validation.' -ForegroundColor Yellow
-Write-Host '  1. Double-click the installer EXE above and complete the setup wizard.' -ForegroundColor Yellow
+Write-Host 'Install/uninstall validation uses the generated MSI with documented msiexec switches;' -ForegroundColor Yellow
+Write-Host 'the interactive EXE wizard itself remains unexercised (Stage 9D qualification).' -ForegroundColor Yellow
 Write-Host '  2. Launch "GTA Casino Fingerprint Solver" from the Start Menu (no console window).' -ForegroundColor Yellow
 Write-Host '  3. Never press ARM during validation: startup must stay DISARMED with zero input.' -ForegroundColor Yellow

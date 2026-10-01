@@ -186,5 +186,6 @@ The installer package itself is inspected statically without executing it: the M
 equals the permanent UUID, the Upgrade table references it, no machine-wide marker exists
 (per-user package), exactly one shortcut exists below the GTA Casino Fingerprint Solver Start
 Menu group (no desktop shortcut), and the install location roots at LocalAppDataFolder.
-Running the installer wizard (install plus uninstall validation) is the documented human step;
-the build script never launches the installer and never automates wizard clicks.
+Install and uninstall validation run against the generated MSI with documented msiexec
+switches; the interactive EXE wizard itself remains unexercised until Stage 9D release
+qualification. The build script never launches the installer and never automates wizard clicks.
