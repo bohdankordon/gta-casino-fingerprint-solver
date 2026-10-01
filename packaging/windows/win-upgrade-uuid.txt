@@ -1,0 +1,3 @@
+# Permanent Windows upgrade UUID (WiX UpgradeCode) for GTA Casino Fingerprint Solver.
+# Generated once for Stage 9B. Every future release must reuse this exact value.
+855C5415-0A97-4FEA-AE54-3B308FE8D1E4

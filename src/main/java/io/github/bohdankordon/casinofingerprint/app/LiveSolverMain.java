@@ -87,7 +87,7 @@ public final class LiveSolverMain {
         try {
             MonitorEnumerator monitors = AwtMonitorEnumerator.create();
             exit = run(options, System.out, System.err, monitors, AwtScreenCapture::forMonitor,
-                    Path.of(System.getProperty("user.dir")));
+                    ApplicationPaths.runtimeDataRoot());
         } catch (CaptureException e) {
             System.err.println("LIVE: CAPTURE_ERROR: " + e.getMessage());
             exit = EXIT_FAILURE;
