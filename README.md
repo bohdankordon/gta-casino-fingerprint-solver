@@ -61,6 +61,24 @@ On Windows:
 
 On macOS/Linux, use `./mvnw` in place of `.\mvnw.cmd`. `compile exec:java` performs a trivial OpenCV operation and prints a health-check result.
 
+## Windows packaging (Stage 9A)
+
+The validated stable 2560x1440 live solver can be built into a self-contained Windows application
+image with:
+
+```powershell
+.\scripts\build-windows-app-image.ps1
+```
+
+The result is `target/dist/app-image`: the project jar, the pinned runtime dependencies, an
+application-private Eclipse Temurin 21 runtime built with jlink, and only the runtime data the
+production solver actually reads. It runs without Maven, Git or a separately installed Java, so the
+target machine needs Windows x64 only. Packaging requires an Eclipse Temurin 21 x64 JDK on the build
+machine (the script never installs or registers Java) plus an interactive desktop session for the
+packaged monitor-listing smoke. The image is the deterministic input for the Stage 9B jpackage
+installer; no installer, no release automation and no code signing exist yet. See
+[docs/windows-packaging.md](docs/windows-packaging.md).
+
 ## Matching
 
 Stage 3 matching is documented in [docs/structural-matching.md](docs/structural-matching.md): the chosen algorithm, the approaches that were measured and rejected, the score semantics, the translation tolerance and the current representative-fixture results.
