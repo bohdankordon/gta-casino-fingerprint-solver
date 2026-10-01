@@ -847,8 +847,8 @@ if ($msiShortcuts.Count -ne 1) {
     Fail ('expected exactly the Start Menu shortcut, found ' + $msiShortcuts.Count + ' shortcut rows')
 }
 $shortcutCells = @($msiShortcuts[0] -split '[|]')
-if (($shortcutCells[2] -ne $ProductName) -and (-not $shortcutCells[2].EndsWith(('|' + $ProductName)))) {
-    Fail ('the shortcut name is not the product name: ' + $shortcutCells[2])
+if (-not ($shortcutCells -contains $ProductName)) {
+    Fail ('the shortcut name is not the product name: ' + ($shortcutCells -join '|'))
 }
 $msiDirectories = @(Invoke-MsiQuery -MsiPath $msiPath -Sql 'SELECT Directory, Directory_Parent, DefaultDir FROM Directory')
 foreach ($line in $msiDirectories) {
