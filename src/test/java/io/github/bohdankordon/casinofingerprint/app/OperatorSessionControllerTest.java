@@ -168,6 +168,44 @@ class OperatorSessionControllerTest {
         assertTrue(controller.isCloseReady(), "Only the terminal state allows disposal");
     }
 
+    @Test
+    void closeDuringStoppingAfterStopSessionDisposesOnlyAtTerminal() throws Exception {
+        InterruptResistantBlockingRunner runner = new InterruptResistantBlockingRunner(
+                new LiveSessionRunner.SessionOutcome(0, false));
+        RecordingListener listener = new RecordingListener();
+        OperatorSessionController controller = new OperatorSessionController(
+                runner, Runnable::run, listener);
+        controller.startSession(CONFIG, Path.of("approot"), silent(), silent());
+        assertTrue(runner.started.await(5, TimeUnit.SECONDS), "Worker starts");
+
+        controller.requestStop();
+        assertEquals(OperatorSessionState.STOPPING, controller.state());
+        assertTrue(runner.interrupted.await(5, TimeUnit.SECONDS),
+                "STOP SESSION interrupts the worker");
+        assertEquals(1L, runner.finished.getCount(), "Worker is still shutting down");
+        assertFalse(controller.isCloseReady(), "STOP SESSION alone requests no close");
+
+        assertFalse(controller.onWindowClosing(), "Close during STOPPING still waits");
+        assertEquals(OperatorSessionState.STOPPING, controller.state());
+        assertFalse(controller.isCloseReady(), "Worker still owns shutdown");
+        assertEquals(1, runner.interruptCount.get(),
+                "The close during STOPPING issues no second interrupt");
+        assertFalse(controller.onWindowClosing(), "Repeated close during STOPPING still waits");
+        assertEquals(OperatorSessionState.STOPPING, controller.state());
+        assertEquals(1, runner.interruptCount.get(), "No further interrupt either");
+        assertEquals(1L, runner.finished.getCount(), "Worker is still shutting down");
+
+        runner.release.countDown();
+        assertTrue(runner.finished.await(5, TimeUnit.SECONDS),
+                "Worker completes once the test releases it");
+        assertTerminal(OperatorSessionState.STOPPED, controller, listener);
+        assertEquals(List.of(OperatorSessionState.ARMED_WATCHING,
+                OperatorSessionState.STOPPING, OperatorSessionState.STOPPED),
+                listener.states);
+        assertTrue(controller.isCloseReady(),
+                "The deferred close becomes ready at the terminal state");
+    }
+
     private static void assertTerminal(OperatorSessionState expected,
             OperatorSessionController controller, RecordingListener listener) {
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);

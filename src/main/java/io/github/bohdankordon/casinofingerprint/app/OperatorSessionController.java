@@ -121,12 +121,14 @@ public final class OperatorSessionController {
      *
      * @return true when the window may dispose immediately (DISARMED or a terminal
      *         state); false while the worker still owns shutdown (ARMED_WATCHING
-     *         or STOPPING). A repeated close during STOPPING keeps waiting without
-     *         triggering another stop transition.
+     *         or STOPPING). A close during STOPPING records the deferred close
+     *         request without triggering another stop transition or interrupt, so
+     *         disposal becomes safe as soon as the worker reaches a terminal state.
      */
     public boolean onWindowClosing() {
         synchronized (lock) {
             if (state == OperatorSessionState.STOPPING) {
+                closeRequested = true;
                 return false;
             }
             if (state != OperatorSessionState.ARMED_WATCHING) {
@@ -138,7 +140,10 @@ public final class OperatorSessionController {
         return false;
     }
 
-    /** True when a close was requested while armed and the worker has since ended. */
+    /**
+     * True when a close was requested while the session was active (ARMED_WATCHING
+     * or STOPPING) and the worker has since ended.
+     */
     public boolean isCloseReady() {
         synchronized (lock) {
             return closeRequested && state.isTerminal();

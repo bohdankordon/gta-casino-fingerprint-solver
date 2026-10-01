@@ -71,7 +71,7 @@ public final class WindowsOperatorMain extends JFrame {
     private BoundedLogModel logModel;
     private Path sessionLogFile;
     private boolean sessionEnded;
-    private boolean closeRequestedWhileArmed;
+    private boolean deferredCloseRequested;
 
     private JLabel statusBadge;
     private JLabel statusLine;
@@ -608,15 +608,17 @@ public final class WindowsOperatorMain extends JFrame {
                                 + "Hold " + immediate + " for the immediate input stop.",
                         "GTA Casino Fingerprint Solver - stopping",
                         JOptionPane.INFORMATION_MESSAGE);
-                closeRequestedWhileArmed = true;
+                deferredCloseRequested = true;
                 if (controller.onWindowClosing()) {
                     dispose();
                 }
                 return;
             }
             if (current == OperatorSessionState.STOPPING) {
-                // Shutdown is already pending: keep the STOPPING state visible with
-                // no repeated dialog and no early dispose.
+                // Shutdown is already pending (for example after STOP SESSION): remember
+                // the close request, keep the STOPPING state visible with no repeated
+                // dialog, no second stop request and no early dispose.
+                deferredCloseRequested = true;
                 controller.onWindowClosing();
                 return;
             }
@@ -654,7 +656,7 @@ public final class WindowsOperatorMain extends JFrame {
             }
             sessionSummary.setText("Session " + state.badge()
                     + ". Restart the application to arm a new live session.");
-            if (closeRequestedWhileArmed) {
+            if (deferredCloseRequested) {
                 dispose();
             }
         }
