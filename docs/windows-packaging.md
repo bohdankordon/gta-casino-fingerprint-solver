@@ -152,7 +152,7 @@ is always a deliberate developer action.
 target/dist/app-image/
     app/
         gta-casino-fingerprint-solver-<version>.jar
-        lib/                 38 pinned runtime dependency jars (JavaCPP, OpenCV, OpenBLAS, JNA)
+        lib/                 staged pinned runtime dependency jars (JavaCPP, OpenCV, OpenBLAS, JNA, plus FlatLaf since Stage 9B)
     runtime/                 private Eclipse Temurin 21 runtime built with jlink
     dataset/
         layout/reference-layout.csv
@@ -160,7 +160,7 @@ target/dist/app-image/
     fixtures/
         gameplay/layout/representative-2560x1440.csv
     config/
-        packaged-files.txt   packaging metadata: SHA-256, size and path of every packaged file
+        packaged-files.txt   packaging metadata: SHA-256, size and path of every other packaged file (the manifest lists payload files present when it is generated and never itself)
     BUILD-INFO.txt
     run-app-image.cmd        launcher: sets cwd to this directory and uses runtime/bin/java.exe
 ```
