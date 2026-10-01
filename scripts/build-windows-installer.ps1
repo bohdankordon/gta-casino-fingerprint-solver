@@ -241,30 +241,50 @@ function Invoke-SmokeTest {
     return $output
 }
 
+function Release-MsiComObject($Object) {
+    if ($null -eq $Object) { return }
+    try {
+        [void][System.Runtime.InteropServices.Marshal]::FinalReleaseComObject($Object)
+    } catch {
+        Add-Log ('MSI inspection COM release failed; the cleanup step still reports any real file lock: ' + $_)
+    }
+}
+
 function Invoke-MsiQuery {
     param(
         [Parameter(Mandatory = $true)][string]$MsiPath,
         [Parameter(Mandatory = $true)][string]$Sql
     )
+    # The open MSI database holds a real handle on the .msi file until its COM object is
+    # released. Releasing every object here keeps the Step 14 cleanup from failing on a
+    # file this process still owns through a leaked Windows Installer COM reference.
     $installer = New-Object -ComObject WindowsInstaller.Installer
-    $database = $installer.GetType().InvokeMember('OpenDatabase', 'InvokeMethod', $null, $installer, @($MsiPath, 0))
-    $view = $database.GetType().InvokeMember('OpenView', 'InvokeMethod', $null, $database, ($Sql))
-    [void]$view.GetType().InvokeMember('Execute', 'InvokeMethod', $null, $view, $null)
+    $database = $null
+    $view = $null
     $rows = New-Object 'System.Collections.Generic.List[string]'
-    while ($true) {
-        $record = $view.GetType().InvokeMember('Fetch', 'InvokeMethod', $null, $view, $null)
-        if ($null -eq $record) { break }
-        $cells = New-Object 'System.Collections.Generic.List[string]'
-        foreach ($index in @(1, 2, 3, 4)) {
-            try {
-                $cells.Add($record.GetType().InvokeMember('StringData', 'GetProperty', $null, $record, $index))
-            } catch {
-                $cells.Add('')
+    try {
+        $database = $installer.GetType().InvokeMember('OpenDatabase', 'InvokeMethod', $null, $installer, @($MsiPath, 0))
+        $view = $database.GetType().InvokeMember('OpenView', 'InvokeMethod', $null, $database, ($Sql))
+        [void]$view.GetType().InvokeMember('Execute', 'InvokeMethod', $null, $view, $null)
+        while ($true) {
+            $record = $view.GetType().InvokeMember('Fetch', 'InvokeMethod', $null, $view, $null)
+            if ($null -eq $record) { break }
+            $cells = New-Object 'System.Collections.Generic.List[string]'
+            foreach ($index in @(1, 2, 3, 4)) {
+                try {
+                    $cells.Add($record.GetType().InvokeMember('StringData', 'GetProperty', $null, $record, $index))
+                } catch {
+                    $cells.Add('')
+                }
             }
+            $rows.Add(($cells -join '|'))
         }
-        $rows.Add(($cells -join '|'))
+        [void]$view.GetType().InvokeMember('Close', 'InvokeMethod', $null, $view, $null)
+    } finally {
+        Release-MsiComObject $view
+        Release-MsiComObject $database
+        Release-MsiComObject $installer
     }
-    [void]$view.GetType().InvokeMember('Close', 'InvokeMethod', $null, $view, $null)
     return $rows
 }
 
