@@ -384,3 +384,6 @@ leave `local-data/`.
 Stage 8: controlled live GTA end-to-end testing with the acceptance protocol it defines:
 real round-advance timing, live threshold validation, abort/drill behaviour with GTA
 focused, and only then any claim of live-game reliability.
+
+
+Later validation note (Stage 8D.1): the production path described here was later validated in a real 2560x1440 multi-door vault run; see [stage8d1-live-validation.md](stage8d1-live-validation.md).

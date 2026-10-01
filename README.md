@@ -1,6 +1,10 @@
 # GTA Casino Fingerprint Solver
 
-An early, recognition-only computer-vision prototype for the GTA Online Diamond Casino Heist fingerprint matching minigame. The puzzle shows one target fingerprint and eight candidate fragments. Exactly four candidates match; the game has four known targets, each with a fixed set of four fragments.
+Java/OpenCV solver for the GTA Online Diamond Casino Heist fingerprint minigame. The puzzle shows one target fingerprint and eight candidate fragments. Exactly four candidates match; the game has four known targets, each with a fixed set of four fragments. Recognition plus constrained solving plus verified keyboard automation exists on the stable live profile: 2560x1440.
+
+Current validated live milestone (Stage 8D.1, real GTA V Enhanced Borderless 2560x1440): 3 hacks / 6 rounds in one continuous solver process across loot gaps, all four fingerprints represented, zero observed wrong actions or faults in that run. See [docs/stage8d1-live-validation.md](docs/stage8d1-live-validation.md).
+
+1920x1080 is NOT part of the stable validated profile at this commit; 1080p remains outside the validated stable profile.
 
 ## Status and scope
 
