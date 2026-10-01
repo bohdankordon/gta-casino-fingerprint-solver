@@ -716,7 +716,8 @@ Invoke-WithScrubbedJavaEnvironment {
         Fail ('the smoke test used a Java runtime outside the jpackage image: java.home=' + $bundledHome)
     }
     Write-Note ('bundled java.home: ' + $bundledHome)
-    Invoke-SmokeTest -Name 'C-operator-smoke' -FilePath $bundledJava -Arguments @($appRootArgument, '-cp', ($appPayloadAbs + '/*'), $MainClass, '--operator-smoke') -WorkingDirectory $outsideCwd -Expect @('OPERATOR SMOKE: FlatLaf version: ' + $FlatLafVersion, 'OPERATOR SMOKE: OpenCV health: OK', 'OPERATOR SMOKE: reference manifest: 20 crops', 'OPERATOR SMOKE: reference library: 20 crops normalized', 'OPERATOR SMOKE: gameplay layout: 2560x1440', 'OPERATOR SMOKE: monitors (', 'OPERATOR STATE: DISARMED', 'OPERATOR INPUT: none sent') | Out-Null
+    $operatorMarkers = @('OPERATOR SMOKE: FlatLaf version: ' + $FlatLafVersion, 'OPERATOR SMOKE: OpenCV health: OK', 'OPERATOR SMOKE: reference manifest: 20 crops', 'OPERATOR SMOKE: reference library: 20 crops normalized', 'OPERATOR SMOKE: gameplay layout: 2560x1440', 'OPERATOR SMOKE: monitors (', 'OPERATOR STATE: DISARMED', 'OPERATOR INPUT: none sent')
+    Invoke-SmokeTest -Name 'C-operator-smoke' -FilePath $bundledJava -Arguments @($appRootArgument, '-cp', ($appPayloadAbs + '/*'), $MainClass, '--operator-smoke') -WorkingDirectory $outsideCwd -Expect $operatorMarkers | Out-Null
     Invoke-SmokeTest -Name 'D-cli-monitor-listing' -FilePath $bundledJava -Arguments @($appRootArgument, '-cp', ($appPayloadAbs + '/*'), $LiveMainClass, '--list-monitors') -WorkingDirectory $outsideCwd -Expect @('layout requires physical 2560x1440', 'no input sent') | Out-Null
     $guiLogFile = Join-Path $SmokeDir 'E-gui-launcher.log'
     $guiEntry = New-Object 'System.Collections.Generic.List[string]'
