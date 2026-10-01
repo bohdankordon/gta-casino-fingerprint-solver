@@ -506,7 +506,15 @@ Remove-WithinTarget $Stage9BDir
 New-Item -ItemType Directory -Path $JpackageInputDir -Force | Out-Null
 New-Item -ItemType Directory -Path $SmokeDir -Force | Out-Null
 $stage9AScript = Join-Path $ScriptDir 'build-windows-app-image.ps1'
-Invoke-Tool -Label 'Stage 9A packaging build' -FilePath 'powershell.exe' -Arguments @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $stage9AScript, '-PackagingJdk', (" + $jdkRoot + ")) | Out-Null
+$stage9AHost = 'powershell.exe'
+$pwshCommand = Get-Command pwsh.exe -ErrorAction SilentlyContinue
+if ($pwshCommand) {
+    $stage9AHost = $pwshCommand.Source
+    Write-Note ('Stage 9A runs under PowerShell 7: ' + $stage9AHost)
+} else {
+    Write-Note 'Stage 9A runs under Windows PowerShell 5.1 (pwsh.exe was not found)'
+}
+Invoke-Tool -Label 'Stage 9A packaging build' -FilePath $stage9AHost -Arguments @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $stage9AScript, '-PackagingJdk', $jdkRoot) | Out-Null
 Write-Note 'Stage 9A build finished; verifying it consumed this exact commit'
 if (-not (Test-Path -LiteralPath $Stage9ABuildInfo)) {
     Fail ('the Stage 9A build did not produce ' + $Stage9ABuildInfo)
