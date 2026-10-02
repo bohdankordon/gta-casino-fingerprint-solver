@@ -12,6 +12,14 @@ Stage 0 provides the Java project, native OpenCV verification, and domain and pr
 
 Stage 6C.1C characterizes the independent visual round-transition witness candidates documented in [docs/transition-witness-analysis.md](docs/transition-witness-analysis.md): five witness families (raw panel difference as a control, target-only structural similarity, per-candidate same-position structural similarity, the full puzzle signature and the matcher evidence signatures) are measured on every decoded frame of both recordings against one deterministic consumed-round content baseline per round, and the four real R1 to R2 transitions, 3800 same-round frames, a 104 rule threshold sweep, a counterfactual same-identity replay and an exact-visual-repeat control show that an identity-independent content witness is measurable without being promoted. Stage 6C.1C adds NO production transition witness, changes nothing in `RoundLifecycleTracker` or `RecognitionConsensusTracker`, weakens nothing in the fail-closed same-identity behaviour, promotes no threshold, sends no input, adds no timer and adds no production 1080p support.
 
+## Releases
+
+Windows x64 release automation uses validated SemVer tags, a private Temurin
+runtime and an unsigned installer. See [release policy and validation](docs/releases.md)
+for version mapping, checksums, provenance and dry-run/recovery procedures.
+The intended first prerelease is `v0.9.0-beta.1`; it has not been created by Stage 9C.
+Tag creation and publication require a separate controlled release step after review.
+
 ## Stack
 
 - Java 21

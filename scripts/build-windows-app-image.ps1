@@ -42,6 +42,7 @@
 [CmdletBinding()]
 param(
     [string]$PackagingJdk = '',
+    [string]$ProjectVersion = '',
     [switch]$KeepRelocationCopy
 )
 
@@ -59,7 +60,7 @@ $HealthCheckMain = 'io.github.bohdankordon.casinofingerprint.app.FingerprintAppl
 $PreviewMain = 'io.github.bohdankordon.casinofingerprint.gameplay.ReferenceNormalizationPreview'
 $RequiredJdkMajor = 21
 $AcceptedVendorPattern = 'Adoptium|Temurin'
-$MinimumTests = 859
+$MinimumTests = 915
 $RuntimeModules = @('java.base', 'java.desktop', 'java.logging', 'java.management', 'jdk.unsupported')
 $RuntimeDataFiles = @(
     'dataset/layout/reference-layout.csv',
@@ -398,12 +399,19 @@ Write-Note ('JDK resolved from: ' + $jdkSource)
 # ---------------------------------------------------------------------------
 Write-Step 'Build and test with the Maven wrapper'
 $pomXml = [xml](Get-Content -LiteralPath (Join-Path $RepoRoot 'pom.xml') -Raw)
-$projectVersion = $pomXml.project.version
-if (-not $projectVersion) {
-    Fail 'could not read the project version from pom.xml'
+# PowerShell variables are case-insensitive: preserve the parameter as the effective version.
+if ($ProjectVersion -ceq '') {
+    $ProjectVersion = [string]$pomXml.project.properties.revision
 }
-Write-Note ('project version: ' + $projectVersion)
-$mavenResult = Invoke-Tool -Label 'Maven clean verify package' -FilePath (Join-Path $RepoRoot 'mvnw.cmd') -Arguments @('-B', '-ntp', 'clean', 'verify', 'package')
+if ($ProjectVersion -cnotmatch '\A[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?\z') {
+    Fail '-ProjectVersion must be a nonblank safe Maven version (for example 0.9.0-beta.1).'
+}
+if ([string]$pomXml.project.version -cne '${revision}') {
+    Fail 'pom.xml must use the CI-friendly ${revision} project version.'
+}
+Write-Note ('project version: ' + $ProjectVersion)
+$mavenArguments = @('-B', '-ntp', ('-Drevision=' + $ProjectVersion), 'clean', 'verify', 'package')
+$mavenResult = Invoke-Tool -Label 'Maven clean verify package' -FilePath (Join-Path $RepoRoot 'mvnw.cmd') -Arguments $mavenArguments
 $testSummary = Split-Lines $mavenResult.Output | Where-Object { $_ -like '*Tests run:*' -and $_ -notlike '* -- in *' } | Select-Object -Last 1
 if (-not $testSummary) {
     Fail 'the Maven output did not contain a test summary; refusing to package an unverified build'
@@ -412,7 +420,7 @@ $trimmedSummary = $testSummary.Trim()
 $testsMatch = $trimmedSummary -match 'Tests run: ([0-9]+)'
 $testsRun = 0
 if ($testsMatch) { $testsRun = [int]$Matches[1] }
-if ($trimmedSummary -notlike '*Failures: 0*' -or $trimmedSummary -notlike '*Errors: 0*') {
+if ($trimmedSummary -notlike '*Failures: 0*' -or $trimmedSummary -notlike '*Errors: 0*' -or $trimmedSummary -notlike '*Skipped: 0*') {
     Fail ('the test summary reports failures or errors: ' + $trimmedSummary)
 }
 if ($testsRun -lt $MinimumTests) {
