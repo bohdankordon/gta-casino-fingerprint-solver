@@ -99,8 +99,17 @@ try {
         }
     }
     $hostExe = (Get-Process -Id $PID).Path
-    & $hostExe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'build-windows-installer.ps1') -ProjectVersion $version.semanticVersion -AppVersion $version.windowsPackageVersion -PackagingJdk $PackagingJdk -WixBinDir $WixBinDir
-    if ($LASTEXITCODE -ne 0) { throw 'Full Stage 9B installer build failed; no release bundle is produced.' }
+    # The wrapper compiles with JAVA_HOME. Bind it to the validated packaging JDK
+    # for this child process too, even if the caller has another developer JDK.
+    $savedJavaHome = $env:JAVA_HOME
+    try {
+        $env:JAVA_HOME = $PackagingJdk
+        & $hostExe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'build-windows-installer.ps1') -ProjectVersion $version.semanticVersion -AppVersion $version.windowsPackageVersion -PackagingJdk $PackagingJdk -WixBinDir $WixBinDir
+        if ($LASTEXITCODE -ne 0) { throw 'Full Stage 9B installer build failed; no release bundle is produced.' }
+    } finally {
+        if ($null -eq $savedJavaHome) { Remove-Item Env:JAVA_HOME -ErrorAction SilentlyContinue }
+        else { $env:JAVA_HOME = $savedJavaHome }
+    }
 
     $buildInfo = [IO.File]::ReadAllLines((Join-Path $RepoRoot 'target/dist/app-image/BUILD-INFO.txt'))
     $summary = [IO.File]::ReadAllLines((Join-Path $RepoRoot 'target/stage9b/summary.txt'))
