@@ -180,8 +180,9 @@ the old product's upgrade removal cannot launch. Silent/reduced UI, maintenance/
 uninstall, administrative installs, elevated sessions, failure and cancellation cannot launch.
 The standard checkbox is initially hidden and shown only when its text exists and `NOT Installed`;
 normal maintenance/uninstall does not offer launch. Even an elevated interactive session is blocked
-by `MsiRunningElevated`. Ordinary per-user setup runs as the interactive user, with an asInvoker
-EXE manifest and a limited-privilege MSI. The launched operator starts DISARMED with zero gameplay
+by `MsiRunningElevated`. Ordinary per-user setup runs as the interactive user, with the
+stock jpackage EXE wrapper and a limited-privilege MSI. The wrapper has no `RT_MANIFEST`
+resource; no elevation manifest is introduced. The launched operator starts DISARMED with zero gameplay
 input; existing input-free startup and relocation smokes remain mandatory.
 
 ## Permanent upgrade identity
@@ -295,8 +296,10 @@ The installer package itself is inspected statically without executing it: the M
 equals the permanent UUID, the Upgrade table references it, no machine-wide marker exists
 (per-user package), exactly one shortcut exists below the GTA Casino Fingerprint Solver Start
 Menu group (no desktop shortcut), and the install location roots at LocalAppDataFolder.
-The EXE is statically checked for NotSigned and an asInvoker manifest, and MSI summary flags
-must declare no elevation requirement. `scripts/test-windows-installer-ui.ps1` opens the actual
+The EXE is statically checked for NotSigned and no requested elevation: the pinned stock wrapper
+has no `RT_MANIFEST` resource (if present, an execution-level manifest must be asInvoker).
+PE resources are loaded strictly as data without executing the EXE. MSI summary flags must
+declare no elevation requirement. `scripts/test-windows-installer-ui.ps1` opens the actual
 MSI database read-only and records named-column rows from Dialog, Control, ControlEvent,
 ControlCondition, CheckBox, EventMapping, Property, CustomAction, ActionText, File/Component
 and install/admin sequence tables. It checks the exact navigation, INSTALLDIR targeting,

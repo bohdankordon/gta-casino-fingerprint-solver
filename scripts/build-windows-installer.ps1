@@ -323,7 +323,12 @@ public static class Stage9BPeResources {
     if ($module -eq [IntPtr]::Zero) { Fail 'could not open installer PE resources as data' }
     try {
         $resource = [Stage9BPeResources]::FindResource($module, [IntPtr]1, [IntPtr]24)
-        if ($resource -eq [IntPtr]::Zero) { Fail 'installer PE manifest resource ID 1 is missing' }
+        if ($resource -eq [IntPtr]::Zero) {
+            # The pinned stock msiwrapper has no RT_MANIFEST at all. Distinguish
+            # ERROR_RESOURCE_TYPE_NOT_FOUND from an unexpected ID/read error.
+            if ([System.Runtime.InteropServices.Marshal]::GetLastWin32Error() -eq 1813) { return '' }
+            Fail 'installer PE manifest resource cannot be read at the expected ID'
+        }
         $size = [Stage9BPeResources]::SizeofResource($module, $resource)
         $loaded = [Stage9BPeResources]::LoadResource($module, $resource)
         $data = [Stage9BPeResources]::LockResource($loaded)
@@ -913,14 +918,19 @@ if ($installerSignature.Status -ne 'NotSigned') { Fail 'the development/release 
 Write-Note 'installer Authenticode: NotSigned'
 # Inspect only the EXE's actual manifest resource without invoking the EXE.
 $installerManifestText = Read-ExeManifest $installerPath
-[System.IO.File]::WriteAllText((Join-Path $DiagnosticsDir 'installer.manifest'), $installerManifestText)
-$installerManifest = [xml]$installerManifestText
-$executionLevels = @($installerManifest.SelectNodes('//*[local-name()="requestedExecutionLevel"]'))
-if ($executionLevels.Count -ne 1 -or $executionLevels[0].GetAttribute('level') -cne 'asInvoker' -or
-    $executionLevels[0].GetAttribute('uiAccess') -cne 'false') {
-    Fail 'the EXE manifest must request asInvoker only'
+if ($installerManifestText) {
+    [System.IO.File]::WriteAllText((Join-Path $DiagnosticsDir 'installer.manifest'), $installerManifestText)
+    $installerManifest = [xml]$installerManifestText
+    $executionLevels = @($installerManifest.SelectNodes('//*[local-name()="requestedExecutionLevel"]'))
+    if ($executionLevels.Count -ne 1 -or $executionLevels[0].GetAttribute('level') -cne 'asInvoker' -or
+        $executionLevels[0].GetAttribute('uiAccess') -cne 'false') {
+        Fail 'an installer EXE manifest must request asInvoker only'
+    }
+    Write-Note 'installer EXE manifest: asInvoker (static, never executed)'
+} else {
+    [System.IO.File]::WriteAllText((Join-Path $DiagnosticsDir 'installer-manifest.txt'), 'No RT_MANIFEST resource in the stock jpackage EXE wrapper. No elevation manifest added.')
+    Write-Note 'stock jpackage EXE wrapper: no RT_MANIFEST resource; no elevation manifest added'
 }
-Write-Note 'installer EXE manifest: asInvoker (static, never executed)'
 
 # ---------------------------------------------------------------------------
 # Step 13: static installer inspection (the installer is never executed here)
