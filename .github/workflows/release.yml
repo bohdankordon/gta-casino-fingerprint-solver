@@ -1,0 +1,291 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/release.yml'
+      - 'scripts/resolve-release-version.ps1'
+      - 'scripts/build-release-bundle.ps1'
+      - 'scripts/test-release-publication.py'
+      - 'scripts/build-windows-installer.ps1'
+      - 'scripts/build-windows-app-image.ps1'
+      - 'packaging/windows/**'
+      - 'packaging/app-image/**'
+      - 'pom.xml'
+  workflow_dispatch:
+    inputs:
+      release-tag:
+        description: 'Candidate release tag (validation only; never publishes)'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.event_name }}-${{ github.event.pull_request.number || inputs.release-tag || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Windows release bundle
+    runs-on: windows-2025
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+      semantic-version: ${{ steps.version.outputs.semantic-version }}
+      windows-version: ${{ steps.version.outputs.windows-version }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
+      commit: ${{ steps.version.outputs.commit }}
+      artifact-name: ${{ steps.version.outputs.artifact-name }}
+      real-tag: ${{ steps.version.outputs.real-tag }}
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Resolve version and enforce tag integrity
+        id: version
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          RELEASE_REF: ${{ github.ref }}
+          TRIGGER_SHA: ${{ github.sha }}
+          DISPATCH_TAG: ${{ inputs.release-tag }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          ./scripts/resolve-release-version.ps1 -SelfTest
+          $tag = 'v0.9.0-beta.1'
+          if ($env:EVENT_NAME -eq 'workflow_dispatch') { $tag = $env:DISPATCH_TAG }
+          $realTag = $env:EVENT_NAME -eq 'push' -and $env:RELEASE_REF.StartsWith('refs/tags/')
+          if ($env:EVENT_NAME -eq 'push' -and -not $realTag) { throw 'Only tag pushes may release.' }
+          if ($realTag) { $tag = $env:RELEASE_REF.Substring('refs/tags/'.Length) }
+          $version = ./scripts/resolve-release-version.ps1 -ReleaseTag $tag | ConvertFrom-Json
+          $commit = git rev-parse HEAD
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot read checkout commit.' }
+          if ($commit -cne $env:TRIGGER_SHA) { throw 'Checkout differs from triggering commit.' }
+          if ($realTag) {
+            $tagCommit = git rev-parse --verify ('refs/tags/' + $version.tag + '^{commit}')
+            if ($LASTEXITCODE -ne 0 -or $tagCommit -cne $commit) { throw 'Tag must resolve to triggering checkout commit.' }
+            git merge-base --is-ancestor $tagCommit origin/main
+            if ($LASTEXITCODE -ne 0) { throw 'Release commit must be reachable from origin/main.' }
+          }
+          $prefix = if ($realTag) { 'stage9c-release' } else { 'stage9c-release-dry-run' }
+          @(
+            ('tag=' + $version.tag), ('semantic-version=' + $version.semanticVersion),
+            ('windows-version=' + $version.windowsPackageVersion),
+            ('prerelease=' + $version.isPrerelease.ToString().ToLowerInvariant()),
+            ('commit=' + $commit), ('real-tag=' + $realTag.ToString().ToLowerInvariant()),
+            ('artifact-name=' + $prefix + '-' + $commit.Substring(0, 12))
+          ) | Add-Content -LiteralPath $env:GITHUB_OUTPUT -Encoding utf8
+
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6
+        with:
+          distribution: temurin
+          # Exact Adoptium catalog SemVer for Temurin 21.0.6+7-LTS (build 7).
+          java-version: '21.0.6+7.0.LTS'
+          architecture: x64
+          java-package: jdk
+          check-latest: false
+          cache: maven
+
+      - name: Validate publication failure gates without API changes
+        run: python scripts/test-release-publication.py
+
+      - name: Independently validate exact Java and preinstalled WiX
+        id: toolchain
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $settings = & "$env:JAVA_HOME/bin/java.exe" -XshowSettings:properties -version 2>&1 | Out-String
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot inspect selected release JDK.' }
+          $expected = @{ 'java.version' = '21.0.6'; 'java.vendor' = 'Eclipse Adoptium'; 'java.runtime.version' = '21.0.6+7-LTS'; 'os.arch' = 'amd64' }
+          foreach ($name in $expected.Keys) {
+            $match = [regex]::Match($settings, ('(?m)^\s*' + [regex]::Escape($name) + ' = (.+)\r?$'))
+            $actual = $match.Groups[1].Value.Trim()
+            Write-Host ($name + ': ' + $actual)
+            if (-not $match.Success -or $actual -cne $expected[$name]) { throw ('Unexpected release JDK setting: ' + $name) }
+          }
+          $candidates = @()
+          if ($env:WIX) { $candidates += (Join-Path $env:WIX 'bin') }
+          $candidates += 'C:\Program Files (x86)\WiX Toolset v3.14\bin'
+          $wix = @($candidates | Select-Object -Unique | Where-Object {
+            (Test-Path -LiteralPath (Join-Path $_ 'candle.exe')) -and (Test-Path -LiteralPath (Join-Path $_ 'light.exe'))
+          }) | Select-Object -First 1
+          if (-not $wix) { throw 'windows-2025 must provide WiX 3.14.1.8722. Check the runner image inventory and update the explicitly validated toolchain in a reviewed PR; do not install a substitute.' }
+          foreach ($tool in @('candle.exe', 'light.exe')) {
+            $banner = & (Join-Path $wix $tool) '-?' 2>&1 | Out-String
+            if ($LASTEXITCODE -ne 0 -or $banner -notmatch 'version 3[.]14[.]1[.]8722(?:\s|$)') {
+              throw ('Expected preinstalled WiX 3.14.1.8722: ' + $tool + '. Review windows-2025 image changes; do not download another version.')
+            }
+            Write-Host $banner
+          }
+          ('wix-bin=' + $wix) | Add-Content -LiteralPath $env:GITHUB_OUTPUT -Encoding utf8
+
+      - name: Build complete Stage 9B release bundle (zero gameplay input)
+        env:
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+          WIX_BIN: ${{ steps.toolchain.outputs.wix-bin }}
+        run: ./scripts/build-release-bundle.ps1 -ReleaseTag $env:RELEASE_TAG -PackagingJdk $env:JAVA_HOME -WixBinDir $env:WIX_BIN
+
+      - name: Independently recheck the completed bundle
+        env:
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+        run: ./scripts/build-release-bundle.ps1 -ReleaseTag $env:RELEASE_TAG -VerifyOnly
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ${{ steps.version.outputs.artifact-name }}
+          path: target/release/
+          if-no-files-found: error
+          retention-days: 10
+          compression-level: 0
+
+  publish:
+    name: Publish validated tag bundle
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') && needs.build.outputs.real-tag == 'true'
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    steps:
+      # No checkout and no rebuilding or executing downloaded assets in the write-token job.
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: ${{ needs.build.outputs.artifact-name }}
+          path: bundle
+
+      - name: Verify bundle, remote tag and draft assets before publication
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ needs.build.outputs.tag }}
+          SEMANTIC_VERSION: ${{ needs.build.outputs.semantic-version }}
+          WINDOWS_VERSION: ${{ needs.build.outputs.windows-version }}
+          PRERELEASE: ${{ needs.build.outputs.prerelease }}
+          RELEASE_SHA: ${{ needs.build.outputs.commit }}
+          TRIGGER_SHA: ${{ github.sha }}
+          TRIGGER_REF: ${{ github.ref }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib, re, subprocess, tempfile
+          from urllib.parse import quote
+
+          def gh(*args):
+              return subprocess.check_output(['gh', *args], text=True)
+
+          def api(path):
+              return json.loads(gh('api', path))
+
+          def digest(path):
+              with path.open('rb') as stream:
+                  return hashlib.file_digest(stream, 'sha256').hexdigest()
+
+          tag = os.environ['RELEASE_TAG']
+          semver = os.environ['SEMANTIC_VERSION']
+          windows = os.environ['WINDOWS_VERSION']
+          prerelease = os.environ['PRERELEASE']
+          sha = os.environ['RELEASE_SHA']
+          repo = os.environ['GH_REPO']
+          assert os.environ['TRIGGER_REF'] == 'refs/tags/' + tag
+          assert sha == os.environ['TRIGGER_SHA']
+          # Independently enforce the policy in the privileged job.
+          match = re.fullmatch(r'v(0|[1-9][0-9]{0,2})\.(0|[1-9][0-9]{0,2})\.(0|[1-9][0-9]{0,3})(?:-(alpha|beta|rc)\.([1-9][0-9]{0,3}))?', tag)
+          assert match, 'Invalid release tag'
+          major, minor, patch = map(int, match.group(1, 2, 3))
+          channel, number = match.group(4, 5)
+          assert major <= 255 and minor <= 255
+          expected_windows = f'{major}.{minor}.{patch}'
+          if channel:
+              assert patch == 0 and (major or minor)
+              build = {'alpha': 10000, 'beta': 30000, 'rc': 50000}[channel] + int(number)
+              expected_windows = f'{major}.{minor - 1}.{build}' if minor else f'{major - 1}.255.{build}'
+          assert windows == expected_windows and semver == tag[1:]
+          assert prerelease == ('true' if channel else 'false')
+          exe = f'GTA-Casino-Fingerprint-Solver-{tag}-windows-x64.exe'
+          names = {exe, 'release-provenance.txt', 'SHA256SUMS.txt'}
+
+          def verify(directory):
+              entries = list(directory.iterdir())
+              assert {p.name for p in entries} == names and len(entries) == 3, 'Unexpected asset set'
+              assert all(p.is_file() and not p.is_symlink() for p in entries)
+              lines = (directory / 'SHA256SUMS.txt').read_text(encoding='utf-8').splitlines()
+              assert len(lines) == 2
+              seen = set()
+              for line in lines:
+                  item = re.fullmatch(r'([0-9a-f]{64})  (.+)', line)
+                  assert item, 'Invalid checksum format'
+                  checksum, name = item.groups()
+                  assert name in {exe, 'release-provenance.txt'} and name not in seen
+                  seen.add(name)
+                  assert digest(directory / name) == checksum, 'Checksum mismatch'
+              fields = {}
+              for line in (directory / 'release-provenance.txt').read_text(encoding='utf-8').splitlines():
+                  key, sep, value = line.partition(':')
+                  assert sep and key not in fields, 'Duplicate/invalid provenance field'
+                  fields[key] = value.strip()
+              expected = {'Release tag': tag, 'Semantic version': semver, 'Windows package version': windows,
+                          'Prerelease': prerelease, 'Git SHA': sha, 'GitHub repository': repo,
+                          'GitHub run ID': os.environ['GITHUB_RUN_ID'], 'GitHub run attempt': os.environ['GITHUB_RUN_ATTEMPT'],
+                          'Installer public filename': exe, 'Installer SHA-256': digest(directory / exe),
+                          'Installer bytes': str((directory / exe).stat().st_size), 'Code signing': 'NOT SIGNED',
+                          'Temurin version': '21.0.6+7-LTS', 'Selected Java os.arch': 'amd64',
+                          'JAR Implementation-Version': semver,
+                          'Startup': 'DISARMED / zero input'}
+              assert all(fields.get(k) == v for k, v in expected.items()), 'Provenance mismatch'
+              assert int(fields['Maven test count']) >= 915
+              return {name: digest(directory / name) for name in names}
+
+          bundle = pathlib.Path('bundle')
+          hashes = verify(bundle)
+          encoded_tag = quote(tag, safe='')
+
+          def verify_remote_tag():
+              obj = api(f'repos/{repo}/git/ref/tags/{encoded_tag}')['object']
+              for _ in range(10):
+                  if obj['type'] == 'commit':
+                      break
+                  assert obj['type'] == 'tag', 'Unexpected remote tag object'
+                  obj = api(f'repos/{repo}/git/tags/{obj["sha"]}')['object']
+              assert obj['type'] == 'commit' and obj['sha'] == sha, 'Remote tag moved or has wrong commit'
+              comparison = api(f'repos/{repo}/compare/{sha}...main')
+              assert comparison['status'] in {'ahead', 'identical'}, 'Release commit is not an ancestor of main'
+
+          verify_remote_tag()
+          # Paginated list includes drafts with this job's repository write token.
+          releases = json.loads(gh('api', '--paginate', '--slurp', f'repos/{repo}/releases?per_page=100'))
+          assert not any(r['tag_name'] == tag for page in releases for r in page), 'A release/draft already exists; stop for human recovery'
+          warning = ('Prerelease / testing build. Unsigned Windows installer; Windows SmartScreen may warn. '
+                     'Stable production profile: physical 2560x1440. Experimental 1080p PR #20 is NOT included.')
+          args = ['release', 'create', tag, '--verify-tag', '--draft', '--generate-notes',
+                  '--title', f'GTA Casino Fingerprint Solver {tag}']
+          if channel:
+              args += ['--prerelease', '--notes', warning]
+          gh(*args)
+          # Any failure after this point leaves the release as a draft; no automatic cleanup.
+          gh('release', 'upload', tag, *(str(bundle / name) for name in sorted(names)))
+          release = json.loads(gh('release', 'view', tag, '--json', 'isDraft,isPrerelease,assets,tagName'))
+          assert release['isDraft'] and release['tagName'] == tag
+          assert release['isPrerelease'] == bool(channel)
+          assets = release['assets']
+          assert len(assets) == 3 and {a['name'] for a in assets} == names, 'Release asset mismatch'
+          assert all(a['size'] == (bundle / a['name']).stat().st_size for a in assets)
+          with tempfile.TemporaryDirectory() as tmp:
+              gh('release', 'download', tag, '--dir', tmp)
+              assert verify(pathlib.Path(tmp)) == hashes, 'Uploaded release bytes differ from validated bundle'
+          assert verify(bundle) == hashes
+          verify_remote_tag()
+          gh('release', 'edit', tag, '--verify-tag', '--draft=false',
+             '--prerelease=' + prerelease, '--latest=' + ('false' if channel else 'true'))
+          print(f'Published validated release {tag} with exactly three assets.')
+          PY

@@ -42,6 +42,7 @@
 [CmdletBinding()]
 param(
     [string]$PackagingJdk = '',
+    [string]$ProjectVersion = '',
     [switch]$KeepRelocationCopy
 )
 
@@ -59,7 +60,7 @@ $HealthCheckMain = 'io.github.bohdankordon.casinofingerprint.app.FingerprintAppl
 $PreviewMain = 'io.github.bohdankordon.casinofingerprint.gameplay.ReferenceNormalizationPreview'
 $RequiredJdkMajor = 21
 $AcceptedVendorPattern = 'Adoptium|Temurin'
-$MinimumTests = 859
+$MinimumTests = 915
 $RuntimeModules = @('java.base', 'java.desktop', 'java.logging', 'java.management', 'jdk.unsupported')
 $RuntimeDataFiles = @(
     'dataset/layout/reference-layout.csv',
@@ -398,12 +399,19 @@ Write-Note ('JDK resolved from: ' + $jdkSource)
 # ---------------------------------------------------------------------------
 Write-Step 'Build and test with the Maven wrapper'
 $pomXml = [xml](Get-Content -LiteralPath (Join-Path $RepoRoot 'pom.xml') -Raw)
-$projectVersion = $pomXml.project.version
-if (-not $projectVersion) {
-    Fail 'could not read the project version from pom.xml'
+# PowerShell variables are case-insensitive: preserve the parameter as the effective version.
+if ($ProjectVersion -ceq '') {
+    $ProjectVersion = [string]$pomXml.project.properties.revision
 }
-Write-Note ('project version: ' + $projectVersion)
-$mavenResult = Invoke-Tool -Label 'Maven clean verify package' -FilePath (Join-Path $RepoRoot 'mvnw.cmd') -Arguments @('-B', '-ntp', 'clean', 'verify', 'package')
+if ($ProjectVersion -cnotmatch '\A[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?\z') {
+    Fail '-ProjectVersion must be a nonblank safe Maven version (for example 0.9.0-beta.1).'
+}
+if ([string]$pomXml.project.version -cne '${revision}') {
+    Fail 'pom.xml must use the CI-friendly ${revision} project version.'
+}
+Write-Note ('project version: ' + $ProjectVersion)
+$mavenArguments = @('-B', '-ntp', ('-Drevision=' + $ProjectVersion), 'clean', 'verify', 'package')
+$mavenResult = Invoke-Tool -Label 'Maven clean verify package' -FilePath (Join-Path $RepoRoot 'mvnw.cmd') -Arguments $mavenArguments
 $testSummary = Split-Lines $mavenResult.Output | Where-Object { $_ -like '*Tests run:*' -and $_ -notlike '* -- in *' } | Select-Object -Last 1
 if (-not $testSummary) {
     Fail 'the Maven output did not contain a test summary; refusing to package an unverified build'
@@ -412,7 +420,7 @@ $trimmedSummary = $testSummary.Trim()
 $testsMatch = $trimmedSummary -match 'Tests run: ([0-9]+)'
 $testsRun = 0
 if ($testsMatch) { $testsRun = [int]$Matches[1] }
-if ($trimmedSummary -notlike '*Failures: 0*' -or $trimmedSummary -notlike '*Errors: 0*') {
+if ($trimmedSummary -notlike '*Failures: 0*' -or $trimmedSummary -notlike '*Errors: 0*' -or $trimmedSummary -notlike '*Skipped: 0*') {
     Fail ('the test summary reports failures or errors: ' + $trimmedSummary)
 }
 if ($testsRun -lt $MinimumTests) {
@@ -479,6 +487,37 @@ if (-not (Test-Path -LiteralPath $AppDir)) {
     New-Item -ItemType Directory -Path $AppDir -Force | Out-Null
 }
 Copy-Item -LiteralPath $appJarPath -Destination (Join-Path $AppDir $expectedJarName) -Force
+# Inspect the actual packaged JAR with the selected JDK's standard manifest parser.
+# JarFile/Manifest handle continuation lines and main-section attribute semantics;
+# no archive extraction or tracked source modification is needed.
+New-Item -ItemType Directory -Path $DiagnosticsDir -Force | Out-Null
+$manifestCheckSource = @'
+import java.util.jar.Attributes;
+import java.util.jar.JarFile;
+
+class VerifyJarImplementationVersion {
+    public static void main(String[] args) throws Exception {
+        try (var jar = new JarFile(args[0])) {
+            var manifest = jar.getManifest();
+            if (manifest == null) {
+                throw new IllegalStateException("Project JAR has no META-INF/MANIFEST.MF");
+            }
+            var actual = manifest.getMainAttributes().getValue(Attributes.Name.IMPLEMENTATION_VERSION);
+            if (!args[1].equals(actual)) {
+                throw new IllegalStateException("JAR Implementation-Version: expected " + args[1] + ", found " + actual);
+            }
+            System.out.println(actual);
+        }
+    }
+}
+'@
+$manifestCheckPath = Join-Path $DiagnosticsDir 'VerifyJarImplementationVersion.java'
+[System.IO.File]::WriteAllText($manifestCheckPath, $manifestCheckSource, (New-Object System.Text.UTF8Encoding($false)))
+$jarImplementationVersion = (Invoke-Tool -Label 'packaged JAR Implementation-Version validation' -FilePath $javaExe -Arguments @($manifestCheckPath, (Join-Path $AppDir $expectedJarName), $projectVersion)).Output.Trim()
+if ($jarImplementationVersion -cne $projectVersion) {
+    Fail ('the packaged JAR Implementation-Version does not equal the effective project version: ' + $jarImplementationVersion)
+}
+Write-Note ('JAR Implementation-Version: ' + $jarImplementationVersion + ' (selected JDK manifest parser; exact effective version)')
 foreach ($relative in $RuntimeDataFiles) {
     $source = Join-Path $RepoRoot $relative
     $destination = Join-Path $ImageRoot $relative
@@ -525,6 +564,7 @@ $worktreeState = 'clean'
 $buildInfo = New-Object 'System.Collections.Generic.List[string]'
 $buildInfo.Add('Product:         ' + $ProductName)
 $buildInfo.Add('Project version: ' + $projectVersion)
+$buildInfo.Add('JAR Implementation-Version: ' + $jarImplementationVersion)
 $buildInfo.Add('Git SHA:         ' + $gitSha)
 $buildInfo.Add('Git branch:      ' + $gitBranch)
 $buildInfo.Add('Git worktree:    ' + $worktreeState)

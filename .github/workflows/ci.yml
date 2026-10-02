@@ -35,6 +35,11 @@ jobs:
         shell: pwsh
         run: .\mvnw.cmd -B -ntp verify
 
+      - name: Validate release version policy
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/resolve-release-version.ps1 -SelfTest
+
       - name: Verify on Ubuntu
         if: runner.os == 'Linux'
         shell: bash

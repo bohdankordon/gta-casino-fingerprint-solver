@@ -6,9 +6,10 @@
 
     <groupId>io.github.bohdankordon</groupId>
     <artifactId>gta-casino-fingerprint-solver</artifactId>
-    <version>0.1.0-SNAPSHOT</version>
+    <version>${revision}</version>
 
     <properties>
+        <revision>0.1.0-SNAPSHOT</revision>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <maven.compiler.release>21</maven.compiler.release>
         <exec.mainClass>io.github.bohdankordon.casinofingerprint.app.FingerprintApplication</exec.mainClass>
@@ -64,6 +65,13 @@
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-jar-plugin</artifactId>
                 <version>3.5.1</version>
+                <configuration>
+                    <archive>
+                        <manifestEntries>
+                            <Implementation-Version>${project.version}</Implementation-Version>
+                        </manifestEntries>
+                    </archive>
+                </configuration>
             </plugin>
             <plugin>
                 <groupId>org.codehaus.mojo</groupId>

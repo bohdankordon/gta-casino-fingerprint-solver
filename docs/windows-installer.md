@@ -36,9 +36,11 @@ solely from that fresh image: the project JAR, every staged runtime dependency J
 config/packaged-files.txt and BUILD-INFO.txt. Nothing else is staged: no launcher cmd,
 no sources, no docs, no recordings, no annotations, no dataset/source and no 1080p content.
 
-Maven still reports the project as 0.1.0-SNAPSHOT. The Windows package version (0.1.0 for
-Stage 9B development) is a build-script parameter (-AppVersion), not a repository version;
-release-version mapping belongs to a later stage.
+Developer builds still resolve Maven revision 0.1.0-SNAPSHOT. Stage 9C adds optional
+-ProjectVersion forwarding into the full Stage 9A build and verifies that BUILD-INFO
+records the requested effective project version. The Windows package version (0.1.0
+for development) remains the independent numeric -AppVersion parameter. For release
+SemVer and Windows upgrade ordering, see [releases.md](releases.md).
 
 ## Private Temurin runtime
 

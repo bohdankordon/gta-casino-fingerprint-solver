@@ -31,6 +31,7 @@
 [CmdletBinding()]
 param(
     [string]$PackagingJdk = '',
+    [string]$ProjectVersion = '',
     [string]$AppVersion = '0.1.0',
     [string]$WixBinDir = '',
     [switch]$KeepJpackageTemp
@@ -52,7 +53,7 @@ $AppRootProperty = 'gta.casino.solver.appRoot'
 $FlatLafVersion = '3.7.2'
 $RequiredJdkMajor = 21
 $AcceptedVendorPattern = 'Adoptium|Temurin'
-$MinimumTests = 859
+$MinimumTests = 915
 $StableProfile = 'GTA V Enhanced, Borderless, physical 2560x1440'
 
 # ---------------------------------------------------------------------------
@@ -488,8 +489,12 @@ foreach ($line in (Split-Lines $candleBanner)) {
 if (-not $wixVersion) {
     Fail ('could not read the WiX version from ' + $candleExe + '; refusing to guess the toolchain.')
 }
-if (-not $wixVersion.StartsWith('3.')) {
-    Fail ('Stage 9B requires WiX 3.x tooling (canonical 3.14.1), but ' + $candleExe + ' reports ' + $wixVersion + '. A newer WiX major version has different tool names and is not accepted by JDK 21 jpackage.')
+if (-not $wixVersion.StartsWith('3.14.')) {
+    Fail ('Stage 9B requires WiX 3.14.x tooling (canonical 3.14.1), but ' + $candleExe + ' reports ' + $wixVersion + '. A newer WiX major version has different tool names and is not accepted by JDK 21 jpackage.')
+}
+$lightBanner = (Invoke-Tool -Label 'light.exe version probe' -FilePath $lightExe -Arguments @('-?')).Output
+if ($lightBanner -notmatch ('version ' + [regex]::Escape($wixVersion) + '(?:\s|$)')) {
+    Fail 'candle.exe and light.exe must report the same WiX 3.14.x version.'
 }
 Write-Note ('WiX version: ' + $wixVersion + ' (build-time only, never bundled)')
 Write-Note ('candle.exe: ' + $candleExe)
@@ -527,7 +532,7 @@ if ($versionParts.Count -ne 3) {
 if (-not $versionNumeric) {
     Fail ('-AppVersion must be numeric major.minor.patch for the Windows installer (got "' + $AppVersion + '"). Prerelease mappings such as v0.9.0-beta.1 belong to Stage 9C, not to this script.')
 }
-Write-Note ('Windows package version: ' + $AppVersion + ' (Maven project stays 0.1.0-SNAPSHOT)')
+Write-Note ('Windows package version: ' + $AppVersion)
 Write-Note ('FlatLaf version: ' + $FlatLafVersion + ' (core artifact only)')
 
 # ---------------------------------------------------------------------------
@@ -543,13 +548,21 @@ if ($pwshCommand) {
 } else {
     Write-Note 'Stage 9A runs under Windows PowerShell 5.1 (pwsh.exe was not found)'
 }
-Invoke-Tool -Label 'Stage 9A packaging build' -FilePath $stage9AHost -Arguments @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $stage9AScript, '-PackagingJdk', $jdkRoot) | Out-Null
+$stage9AArguments = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $stage9AScript, '-PackagingJdk', $jdkRoot)
+if ($ProjectVersion -cne '') {
+    $stage9AArguments += @('-ProjectVersion', $ProjectVersion)
+}
+Invoke-Tool -Label 'Stage 9A packaging build' -FilePath $stage9AHost -Arguments $stage9AArguments | Out-Null
 Write-Note 'Stage 9A build finished; verifying it consumed this exact commit'
 if (-not (Test-Path -LiteralPath $Stage9ABuildInfo)) {
     Fail ('the Stage 9A build did not produce ' + $Stage9ABuildInfo)
 }
 $buildInfoSha = ''
+$buildInfoProjectVersion = ''
 foreach ($line in ([System.IO.File]::ReadAllLines($Stage9ABuildInfo))) {
+    if ($line.StartsWith('Project version:')) {
+        $buildInfoProjectVersion = $line.Substring('Project version:'.Length).Trim()
+    }
     if ($line.StartsWith('Git SHA:')) {
         $buildInfoSha = $line.Substring('Git SHA:'.Length).Trim()
     }
@@ -557,6 +570,15 @@ foreach ($line in ([System.IO.File]::ReadAllLines($Stage9ABuildInfo))) {
 if ($buildInfoSha -ne $gitSha) {
     Fail ('stale Stage 9A output: BUILD-INFO records Git SHA ' + $buildInfoSha + ' but this commit is ' + $gitSha + '. Never consume a stale target/dist/app-image.')
 }
+$expectedProjectVersion = $ProjectVersion
+if ($expectedProjectVersion -ceq '') {
+    $pomXml = [xml](Get-Content -LiteralPath (Join-Path $RepoRoot 'pom.xml') -Raw)
+    $expectedProjectVersion = [string]$pomXml.project.properties.revision
+}
+if ($buildInfoProjectVersion -cne $expectedProjectVersion) {
+    Fail ('Stage 9A project version mismatch: requested ' + $expectedProjectVersion + ', built ' + $buildInfoProjectVersion)
+}
+Write-Note ('Release/Maven project version: ' + $buildInfoProjectVersion)
 Write-Note ('Stage 9A BUILD-INFO references this exact commit: ' + $buildInfoSha)
 $stage9ALog = Join-Path $Stage9ADiagnostics 'build.log'
 $stage9ATests = ''
@@ -585,6 +607,9 @@ if ($projectJars.Count -ne 1) {
     Fail ('the Stage 9A image must hold exactly one project jar, found ' + $projectJars.Count)
 }
 $mainJarName = $projectJars[0].Name
+if ($mainJarName -cne ('gta-casino-fingerprint-solver-' + $buildInfoProjectVersion + '.jar')) {
+    Fail 'the Stage 9A project JAR filename does not match its BUILD-INFO project version.'
+}
 Write-Note ('project jar: ' + $mainJarName)
 Copy-Item -LiteralPath $projectJars[0].FullName -Destination (Join-Path $JpackageInputDir $mainJarName)
 $stage9ALibJars = @(Get-ChildItem -LiteralPath $stage9ALibDir -File -Filter '*.jar')
@@ -944,7 +969,8 @@ Write-Step 'Write the provenance summary'
 $summary = New-Object 'System.Collections.Generic.List[string]'
 $summary.Add('Product:                   ' + $ProductName)
 $summary.Add('Windows package version:   ' + $AppVersion)
-$summary.Add('Maven project version:     0.1.0-SNAPSHOT')
+$summary.Add('Release/Maven project version: ' + $buildInfoProjectVersion)
+$summary.Add('Maven tests:               ' + $stage9ATests)
 $summary.Add('Git SHA:                   ' + $gitSha)
 $summary.Add('Git branch:                ' + $gitBranch)
 $summary.Add('Git worktree:              clean')
