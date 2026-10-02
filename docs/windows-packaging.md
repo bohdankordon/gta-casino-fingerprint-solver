@@ -116,8 +116,10 @@ The script performs, in order:
    identify the committed sources and data. Then the required inputs are checked and the reference
    manifest contract (20 crops, every asset present) is verified.
 3. Packaging JDK check: Java 21, Temurin vendor, all packaging tools present.
-4. mvnw.cmd -B -ntp clean verify package, with a test baseline gate (at least 859 tests, zero
-   failures, zero errors).
+4. mvnw.cmd -B -ntp -Drevision=<effective-project-version> clean verify package, with a
+   test baseline gate (at least 915 tests, zero failures, zero errors, zero skipped).
+   Optional -ProjectVersion overrides the committed default revision 0.1.0-SNAPSHOT;
+   JAR names and BUILD-INFO use that effective version. See [releases.md](releases.md).
 5. Runtime dependency collection from the Maven staging step into app/lib.
 6. jdeps module analysis followed by jlink --strip-debug --no-header-files --no-man-pages --compress=zip-6.
 7. Application image assembly: project jar, runtime data, launcher.
