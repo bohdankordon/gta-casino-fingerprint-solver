@@ -168,6 +168,8 @@ class PublicationTests(unittest.TestCase):
         self.assertEqual(text.count('contents: write'), 1)
         self.assertNotIn('checkout@', publish)
         self.assertIn('cancel-in-progress: false', text)
+        self.assertIn("java-version: '21.0.6+7.0.LTS'", text)
+        self.assertIn("'java.runtime.version' = '21.0.6+7-LTS'", text)
         self.assertNotIn('pull_request_target', text)
         self.assertNotIn('git tag', text)
         self.assertIsNotNone(re.search(r'workflow_dispatch:\n    inputs:\n      release-tag:', text))

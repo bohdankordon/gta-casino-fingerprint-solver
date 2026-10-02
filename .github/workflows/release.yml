@@ -90,7 +90,8 @@ jobs:
       - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6
         with:
           distribution: temurin
-          java-version: '21.0.6+7'
+          # Exact Adoptium catalog SemVer for Temurin 21.0.6+7-LTS (build 7).
+          java-version: '21.0.6+7.0.LTS'
           architecture: x64
           java-package: jdk
           check-latest: false

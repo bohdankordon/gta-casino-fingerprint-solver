@@ -78,6 +78,9 @@ Use a completely clean Windows x64 checkout. Build tools are selected explicitly
 the script does not install them. The release line requires Eclipse Temurin
 21.0.6+7 x64 (`java.runtime.version=21.0.6+7-LTS`, `os.arch=amd64`),
 jpackage 21.0.6 and matching WiX candle/light 3.14.1.8722.
+The setup-java selector is the exact Adoptium catalog SemVer
+`21.0.6+7.0.LTS`; the independently checked Java runtime reports
+`21.0.6+7-LTS`. Neither selector nor runtime validation floats to another build.
 
 ```powershell
 ./scripts/build-release-bundle.ps1 -ReleaseTag v0.9.0-beta.1 `
