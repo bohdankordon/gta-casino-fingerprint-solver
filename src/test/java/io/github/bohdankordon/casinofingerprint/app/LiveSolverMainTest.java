@@ -49,8 +49,10 @@ class LiveSolverMainTest {
         assertEquals(0, exit, "Exit code");
         String text = outBytes.toString(StandardCharsets.UTF_8);
         assertTrue(text.contains("LIVE"), "Live label: " + text);
-        assertTrue(text.contains("layout requires physical 2560x1440"), "Header: " + text);
-        assertTrue(text.contains("-> supported"), "Matching monitor: " + text);
+        assertTrue(text.contains("stable requires physical 2560x1440"), "Header: " + text);
+        assertTrue(text.contains("experimental requires physical 1920x1080"), "Header: " + text);
+        assertTrue(text.contains("stable 1440: supported"), "Matching monitor: " + text);
+        assertTrue(text.contains("experimental 1080: supported"), "1080 monitor: " + text);
         assertTrue(text.contains("no input sent"), "No-input guarantee: " + text);
         assertEquals(0, factory.created(), "Listing monitors captures nothing");
     }
@@ -59,7 +61,7 @@ class LiveSolverMainTest {
     void watchWithoutOptInRefusesBeforeTouchingAnything() {
         LiveSolverOptions options = new LiveSolverOptions(null,
                 LiveSolverOptions.Mode.WATCH, LiveSolverOptions.DEFAULT_INTERVAL_MILLIS,
-                LiveSolverOptions.DEFAULT_STABLE_FRAMES, false, null, null, false);
+                LiveSolverOptions.DEFAULT_STABLE_FRAMES, false, null, null, false, false);
         RecordingFactory factory = new RecordingFactory(FakeScreenCapture.create());
         ByteArrayOutputStream outBytes = new ByteArrayOutputStream();
         PrintStream out = new PrintStream(outBytes, true, StandardCharsets.UTF_8);

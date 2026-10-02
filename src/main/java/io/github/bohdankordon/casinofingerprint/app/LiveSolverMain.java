@@ -9,14 +9,13 @@ import io.github.bohdankordon.casinofingerprint.capture.MonitorInfo;
 import io.github.bohdankordon.casinofingerprint.capture.MonitorSelector;
 import io.github.bohdankordon.casinofingerprint.capture.Resolution;
 import io.github.bohdankordon.casinofingerprint.capture.ScreenCapture;
-import io.github.bohdankordon.casinofingerprint.control.ControlThresholds;
 import io.github.bohdankordon.casinofingerprint.control.LayoutControlReader;
 import io.github.bohdankordon.casinofingerprint.execution.ExecutionReport;
 import io.github.bohdankordon.casinofingerprint.execution.ExecutionState;
 import io.github.bohdankordon.casinofingerprint.execution.SystemExecutionClock;
 import io.github.bohdankordon.casinofingerprint.execution.VerificationPolicy;
-import io.github.bohdankordon.casinofingerprint.gameplay.GameplayFixture;
 import io.github.bohdankordon.casinofingerprint.gameplay.GameplayLayout;
+import io.github.bohdankordon.casinofingerprint.gameplay.LiveGameplayProfile;
 import io.github.bohdankordon.casinofingerprint.input.EmergencyAbortKey;
 import io.github.bohdankordon.casinofingerprint.input.win32.WindowsEmergencyAbort;
 import io.github.bohdankordon.casinofingerprint.input.win32.WindowsForegroundTargetGuard;
@@ -107,20 +106,15 @@ public final class LiveSolverMain {
      */
     static int run(LiveSolverOptions options, PrintStream out, PrintStream err,
             MonitorEnumerator monitors, CaptureFactory captures, Path projectRoot) {
+        LiveGameplayProfile profile = LiveGameplayProfile.select(options.experimental1080p());
         GameplayLayout layout;
         try {
-            layout = GameplayLayout.representative(projectRoot.resolve(GameplayFixture.LAYOUT_REL));
+            layout = profile.loadLayout(projectRoot);
         } catch (IOException | IllegalArgumentException e) {
             err.println("LIVE: SETUP_ERROR: could not read the gameplay layout: " + e.getMessage());
             return EXIT_FAILURE;
         }
-        if (layout.sourceWidth() != GameplayFixture.EXPECTED_WIDTH
-                || layout.sourceHeight() != GameplayFixture.EXPECTED_HEIGHT) {
-            err.println("LIVE: SETUP_ERROR: production live input supports 2560x1440 only, "
-                    + "layout is " + layout.sourceWidth() + "x" + layout.sourceHeight());
-            return EXIT_FAILURE;
-        }
-        Resolution required = new Resolution(layout.sourceWidth(), layout.sourceHeight());
+        Resolution required = profile.resolution();
         List<MonitorInfo> detected;
         try {
             detected = monitors.enumerate();
@@ -129,7 +123,7 @@ public final class LiveSolverMain {
             return EXIT_FAILURE;
         }
         if (options.mode() == LiveSolverOptions.Mode.LIST_MONITORS) {
-            printMonitors(out, detected, required);
+            printMonitors(out, detected);
             return EXIT_OK;
         }
         if (!options.inputEnabled() || options.targetExecutable() == null || options.abortKey() == null) {
@@ -155,7 +149,10 @@ public final class LiveSolverMain {
         out.println("LIVE: target executable: " + options.targetExecutable());
         out.println(emergencyAbortLine(options.abortKey()));
         abortConflictWarning(options.abortKey()).ifPresent(out::println);
-        out.println("LIVE: layout  : " + GameplayFixture.LAYOUT_REL + " -> physical " + required);
+        if (profile.isExperimental()) {
+            printExperimental1080Warning(out, profile);
+        }
+        out.println("LIVE: layout  : " + profile.layoutManifestRel() + " -> physical " + required);
         out.println("LIVE: monitor : " + monitor.describe());
         ReferenceFingerprintLibrary library;
         try {
@@ -170,7 +167,7 @@ public final class LiveSolverMain {
             FrameCapture verificationCapture = capture::capture;
             try (LiveSolveOrchestrator orchestrator = new LiveSolveOrchestrator(pipeline,
                     NavigationContext.characterized(),
-                    new LayoutControlReader(layout, ControlThresholds.PRODUCTION_1440P),
+                    new LayoutControlReader(layout, profile.thresholds()),
                     verificationCapture, options.targetExecutable(),
                     new WindowsSendInputSink(), new WindowsForegroundTargetGuard(),
                     new WindowsEmergencyAbort(options.abortKey().virtualKeyCode()), new SystemExecutionClock(),
@@ -207,15 +204,38 @@ public final class LiveSolverMain {
         return "LIVE: watching the desktop; press Ctrl+C to stop. " + abortKey.symbolicName() + " aborts input immediately.";
     }
 
-    private static void printMonitors(PrintStream out, List<MonitorInfo> monitors,
-            Resolution required) {
-        out.println("LIVE: monitors (" + monitors.size() + "), layout requires physical "
-                + required);
+    /**
+     * Prominent opt-in banner, printed only for the experimental 1080p profile before live
+     * watching begins. Pure, no native call.
+     */
+    static void printExperimental1080Warning(PrintStream out, LiveGameplayProfile profile) {
+        Objects.requireNonNull(out, "out");
+        Objects.requireNonNull(profile, "profile");
+        out.println("LIVE: EXPERIMENTAL 1920x1080 PROFILE ENABLED");
+        out.println("LIVE: this profile has offline real-recording evidence but has not yet completed");
+        out.println("LIVE: independent live-PC validation");
+        out.println("LIVE: physical capture must be exactly 1920x1080");
+        out.println("LIVE: recording the first run is strongly recommended");
+        out.println("LIVE: layout              : " + profile.layoutManifestRel()
+                + " -> physical " + profile.resolution());
+        out.println("LIVE: control thresholds  : " + profile.thresholds());
+    }
+
+    private static void printMonitors(PrintStream out, List<MonitorInfo> monitors) {
+        Resolution stable = LiveGameplayProfile.STABLE_1440P.resolution();
+        Resolution experimental = LiveGameplayProfile.EXPERIMENTAL_1080P.resolution();
+        out.println("LIVE: monitors (" + monitors.size() + "), stable requires physical "
+                + stable + ", experimental requires physical " + experimental + " (opt-in only)");
         for (MonitorInfo monitor : monitors) {
-            String support = monitor.supportsPhysicalResolution(required.width(), required.height())
+            String stableSupport = monitor.supportsPhysicalResolution(stable.width(), stable.height())
                     ? "supported"
-                    : "unsupported (physical mode is not " + required + ")";
-            out.println("  " + monitor.describe() + " -> " + support);
+                    : "unsupported";
+            String experimentalSupport = monitor.supportsPhysicalResolution(
+                    experimental.width(), experimental.height())
+                    ? "supported"
+                    : "unsupported";
+            out.println("  " + monitor.describe() + " -> stable 1440: " + stableSupport
+                    + "; experimental 1080: " + experimentalSupport);
         }
         out.println("LIVE: no input sent.");
     }

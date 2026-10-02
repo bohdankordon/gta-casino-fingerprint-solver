@@ -12,6 +12,7 @@ public record LiveRecognitionOptions(
         Mode mode,
         long intervalMillis,
         int stableFrames,
+        boolean experimental1080p,
         boolean help) {
 
     /** What the runtime should do with the desktop. */
@@ -66,6 +67,7 @@ public record LiveRecognitionOptions(
         boolean once = false;
         boolean watch = false;
         boolean help = false;
+        boolean experimental1080p = false;
         Integer monitorIndex = null;
         long intervalMillis = DEFAULT_INTERVAL_MILLIS;
         int stableFrames = DEFAULT_STABLE_FRAMES;
@@ -75,6 +77,7 @@ public record LiveRecognitionOptions(
                 case "--list-monitors" -> listMonitors = true;
                 case "--once" -> once = true;
                 case "--watch" -> watch = true;
+                case "--enable-experimental-1080p" -> experimental1080p = true;
                 case "--help", "-h" -> help = true;
                 case "--monitor" -> monitorIndex = intValue(args, ++i, argument);
                 case "--interval-ms" -> intervalMillis = longValue(args, ++i, argument);
@@ -84,7 +87,7 @@ public record LiveRecognitionOptions(
         }
         if (help) {
             return new LiveRecognitionOptions(null, Mode.HELP,
-                    DEFAULT_INTERVAL_MILLIS, DEFAULT_STABLE_FRAMES, true);
+                    DEFAULT_INTERVAL_MILLIS, DEFAULT_STABLE_FRAMES, false, true);
         }
         int modes = (listMonitors ? 1 : 0) + (once ? 1 : 0) + (watch ? 1 : 0);
         if (modes == 0) {
@@ -103,7 +106,7 @@ public record LiveRecognitionOptions(
                     "--interval-ms and --stable-frames are only valid with --watch");
         }
         return new LiveRecognitionOptions(monitorIndex, mode,
-                intervalMillis, stableFrames, false);
+                intervalMillis, stableFrames, experimental1080p, false);
     }
 
     /** Command-line help text, also printed for usage errors. */
@@ -116,6 +119,14 @@ public record LiveRecognitionOptions(
                 + "Usage: --list-monitors" + separator
                 + "       [--monitor <index>] --once" + separator
                 + "       [--monitor <index>] --watch [--interval-ms <ms>] [--stable-frames <n>]"
+                + separator + separator
+                + "  --enable-experimental-1080p"
+                + separator
+                + "                        EXPERIMENTAL native 1920x1080 profile instead of the stable"
+                + separator
+                + "                        2560x1440 profile. Offline real-recording evidence only;"
+                + separator
+                + "                        independent live-PC validation is still pending."
                 + separator + separator
                 + "  --list-monitors       list monitors with logical bounds and physical display mode"
                 + separator
