@@ -68,7 +68,16 @@ Windows version (development default `0.1.0`).
 
 For the first prerelease fixture the Stage 9A image contains exactly
 `gta-casino-fingerprint-solver-0.9.0-beta.1.jar`, and BUILD-INFO records
-`Project version: 0.9.0-beta.1`. Stage 9B independently verifies the MSI
+`Project version: 0.9.0-beta.1`.
+The JAR manifest's `Implementation-Version` comes from `${project.version}`:
+`0.1.0-SNAPSHOT` for default builds and `0.9.0-beta.1` for this fixture.
+Stage 9A validates the actual packaged JAR with the selected JDK's `JarFile` /
+`Manifest` parser, including continuation-line handling, and fails if the main
+attribute is missing or differs from the effective version. BUILD-INFO records
+that verified value; release orchestration checks it against SemVer and carries
+it into provenance. The publish job independently checks the provenance field.
+
+Stage 9B independently verifies the MSI
 ProductVersion is `0.8.30001` and preserves the permanent upgrade UUID
 `855C5415-0A97-4FEA-AE54-3B308FE8D1E4`.
 
@@ -171,7 +180,14 @@ checks their names/count/sizes, downloads the draft assets to independently
 verify their bytes/checksums against the bundle, rechecks the remote tag, and
 only then publishes the draft with `--verify-tag`. Prereleases prepend the
 testing/unsigned/SmartScreen/profile/1080p warning and use `--latest=false`.
-Stable releases explicitly use latest=true. The publish job does not use a PAT
+Draft creation passes no `--latest` option for either channel. Only the final
+publication edit sets `--draft=false` and the explicit prerelease/latest flags:
+stable uses `--prerelease=false --latest=true`; prerelease uses
+`--prerelease=true --latest=false`. This follows GitHub's
+[draft/latest contract](https://docs.github.com/en/rest/releases/releases#create-a-release).
+Stable publication semantics are tested against the exact offline publication
+code; no stable publication was executed against GitHub during validation.
+The publish job does not use a PAT
 or a third-party release action. Tag-specific concurrency never cancels an
 in-progress release (`cancel-in-progress: false`).
 

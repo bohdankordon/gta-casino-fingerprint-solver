@@ -45,9 +45,12 @@ class PublicationTests(unittest.TestCase):
                       'Installer SHA-256': hashlib.sha256((bundle / exe).read_bytes()).hexdigest(),
                       'Installer bytes': str((bundle / exe).stat().st_size), 'Code signing': 'NOT SIGNED',
                       'Temurin version': '21.0.6+7-LTS', 'Selected Java os.arch': 'amd64',
+                      'JAR Implementation-Version': semantic,
                       'Startup': 'DISARMED / zero input', 'Maven test count': '915'}
             if fault == 'provenance':
                 fields['Git SHA'] = '2' * 40
+            if fault == 'implementation_version':
+                fields['JAR Implementation-Version'] = 'development build'
             (bundle / 'release-provenance.txt').write_text(
                 ''.join(f'{k}: {v}\n' for k, v in fields.items()), encoding='utf-8')
             (bundle / 'SHA256SUMS.txt').write_text(''.join(
@@ -85,7 +88,8 @@ class PublicationTests(unittest.TestCase):
                     if '/releases?' in path:
                         if fault == 'release_api_failure':
                             raise subprocess.CalledProcessError(1, args)
-                        return json.dumps([[{'tag_name': tag}] if fault == 'existing_release' else []])
+                        return json.dumps([[{'tag_name': tag, 'draft': fault == 'existing_draft'}]
+                                           if fault in ('existing_release', 'existing_draft') else []])
                 if command[:2] == ['release', 'view']:
                     assets = [{'name': p.name, 'size': p.stat().st_size} for p in bundle.iterdir()]
                     if fault == 'asset_mismatch':
@@ -127,8 +131,9 @@ class PublicationTests(unittest.TestCase):
         self.assertIn('--verify-tag', mutations[0])
         self.assertIn('--draft', mutations[0])
         self.assertIn('--generate-notes', mutations[0])
-        self.assertIn('--latest=false', mutations[0])
+        self.assertFalse(any(arg.startswith('--latest') for arg in mutations[0]))
         self.assertIn('--verify-tag', mutations[-1])
+        self.assertIn('--draft=false', mutations[-1])
         self.assertIn('--prerelease=true', mutations[-1])
         self.assertIn('--latest=false', mutations[-1])
         download_index = next(i for i, c in enumerate(self.calls) if c[1:3] == ['release', 'download'])
@@ -138,28 +143,47 @@ class PublicationTests(unittest.TestCase):
     def test_stable_success(self):
         self.exercise(stable=True)
         self.assertIsNone(self.failure)
-        self.assertIn('--prerelease=false', self.mutations()[-1])
-        self.assertIn('--latest=true', self.mutations()[-1])
+        mutations = self.mutations()
+        self.assertEqual([c[2] for c in mutations], ['create', 'upload', 'edit'])
+        self.assertIn('--draft', mutations[0])
+        self.assertIn('--verify-tag', mutations[0])
+        self.assertFalse(any(arg.startswith('--latest') for arg in mutations[0]))
+        self.assertIn('--verify-tag', mutations[-1])
+        self.assertIn('--draft=false', mutations[-1])
+        self.assertIn('--prerelease=false', mutations[-1])
+        self.assertIn('--latest=true', mutations[-1])
+        # Asset metadata, downloaded-byte verification and remote-tag recheck
+        # must complete before the final stable publish call.
+        operations = {op: next(i for i, c in enumerate(self.calls) if c[1:3] == ['release', op])
+                      for op in ('create', 'upload', 'view', 'download', 'edit')}
+        self.assertLess(operations['create'], operations['upload'])
+        self.assertLess(operations['upload'], operations['view'])
+        self.assertLess(operations['view'], operations['download'])
+        tag_checks = [i for i, c in enumerate(self.calls) if c[1] == 'api' and '/git/ref/tags/' in c[-1]]
+        self.assertEqual(len(tag_checks), 2)
+        self.assertLess(operations['download'], tag_checks[-1])
+        self.assertLess(tag_checks[-1], operations['edit'])
 
     def test_annotated_tag_success(self):
         self.exercise('annotated_tag')
         self.assertIsNone(self.failure)
 
     def test_failures_before_draft_have_no_mutations(self):
-        for fault in ('checksum', 'provenance', 'extra_asset', 'duplicate_checksum', 'invalid_tag',
-                      'mapping', 'missing_tag', 'moved_tag', 'side_branch', 'existing_release', 'release_api_failure'):
+        for fault in ('checksum', 'provenance', 'implementation_version', 'extra_asset', 'duplicate_checksum', 'invalid_tag',
+                      'mapping', 'missing_tag', 'moved_tag', 'side_branch', 'existing_release', 'existing_draft', 'release_api_failure'):
             with self.subTest(fault=fault):
                 self.exercise(fault)
                 self.assertIsNotNone(self.failure)
                 self.assertEqual(self.mutations(), [])
 
     def test_failures_after_draft_never_publish(self):
-        for fault in ('upload_failure', 'asset_mismatch', 'uploaded_corruption'):
-            with self.subTest(fault=fault):
-                self.exercise(fault)
-                self.assertIsNotNone(self.failure)
-                self.assertTrue(any(c[2] == 'create' for c in self.mutations()))
-                self.assertFalse(any(c[2] == 'edit' for c in self.mutations()))
+        for stable in (False, True):
+            for fault in ('upload_failure', 'asset_mismatch', 'uploaded_corruption'):
+                with self.subTest(fault=fault, stable=stable):
+                    self.exercise(fault, stable=stable)
+                    self.assertIsNotNone(self.failure)
+                    self.assertTrue(any(c[2] == 'create' for c in self.mutations()))
+                    self.assertFalse(any(c[2] == 'edit' for c in self.mutations()))
 
     def test_workflow_event_and_permission_boundary(self):
         text = WORKFLOW.read_text(encoding='utf-8')

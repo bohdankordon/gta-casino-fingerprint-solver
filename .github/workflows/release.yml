@@ -240,6 +240,7 @@ jobs:
                           'Installer public filename': exe, 'Installer SHA-256': digest(directory / exe),
                           'Installer bytes': str((directory / exe).stat().st_size), 'Code signing': 'NOT SIGNED',
                           'Temurin version': '21.0.6+7-LTS', 'Selected Java os.arch': 'amd64',
+                          'JAR Implementation-Version': semver,
                           'Startup': 'DISARMED / zero input'}
               assert all(fields.get(k) == v for k, v in expected.items()), 'Provenance mismatch'
               assert int(fields['Maven test count']) >= 915
@@ -269,9 +270,7 @@ jobs:
           args = ['release', 'create', tag, '--verify-tag', '--draft', '--generate-notes',
                   '--title', f'GTA Casino Fingerprint Solver {tag}']
           if channel:
-              args += ['--prerelease', '--latest=false', '--notes', warning]
-          else:
-              args += ['--latest']
+              args += ['--prerelease', '--notes', warning]
           gh(*args)
           # Any failure after this point leaves the release as a draft; no automatic cleanup.
           gh('release', 'upload', tag, *(str(bundle / name) for name in sorted(names)))

@@ -58,6 +58,7 @@ function Verify-Bundle {
     $provenance = [IO.File]::ReadAllLines((Join-Path $BundleDir 'release-provenance.txt'), $utf8)
     Require-Equal (Read-Field $provenance 'Release tag') $version.tag 'Release tag'
     Require-Equal (Read-Field $provenance 'Semantic version') $version.semanticVersion 'Semantic version'
+    Require-Equal (Read-Field $provenance 'JAR Implementation-Version') $version.semanticVersion 'JAR Implementation-Version'
     Require-Equal (Read-Field $provenance 'Windows package version') $version.windowsPackageVersion 'Windows version'
     Require-Equal (Read-Field $provenance 'Prerelease') $version.isPrerelease.ToString().ToLowerInvariant() 'Prerelease'
     Require-Equal (Read-Field $provenance 'Installer public filename') $publicName 'Public filename'
@@ -115,6 +116,8 @@ try {
     $summary = [IO.File]::ReadAllLines((Join-Path $RepoRoot 'target/stage9b/summary.txt'))
     Require-Equal (Read-Field $buildInfo 'Git SHA') $gitSha 'Stage 9A Git SHA'
     Require-Equal (Read-Field $buildInfo 'Project version') $version.semanticVersion 'Stage 9A project version'
+    $jarImplementationVersion = Read-Field $buildInfo 'JAR Implementation-Version'
+    Require-Equal $jarImplementationVersion $version.semanticVersion 'Stage 9A JAR Implementation-Version'
     Require-Equal (Read-Field $summary 'Git SHA') $gitSha 'Stage 9B Git SHA'
     Require-Equal (Read-Field $summary 'Release/Maven project version') $version.semanticVersion 'Stage 9B project version'
     Require-Equal (Read-Field $summary 'Windows package version') $version.windowsPackageVersion 'Stage 9B Windows version'
@@ -161,6 +164,7 @@ try {
     $provenance = @(
         'Product: GTA Casino Fingerprint Solver', ('Release tag: ' + $version.tag),
         ('Semantic version: ' + $version.semanticVersion), ('Windows package version: ' + $version.windowsPackageVersion),
+        ('JAR Implementation-Version: ' + $jarImplementationVersion),
         ('Prerelease: ' + $version.isPrerelease.ToString().ToLowerInvariant()),
         ('Git SHA: ' + $gitSha), ('Git tree SHA: ' + $gitTree), ('Git branch/ref: ' + $gitBranch + ' / ' + $env:GITHUB_REF),
         ('GitHub run ID: ' + $env:GITHUB_RUN_ID), ('GitHub run attempt: ' + $env:GITHUB_RUN_ATTEMPT),

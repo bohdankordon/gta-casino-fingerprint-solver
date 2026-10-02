@@ -487,6 +487,37 @@ if (-not (Test-Path -LiteralPath $AppDir)) {
     New-Item -ItemType Directory -Path $AppDir -Force | Out-Null
 }
 Copy-Item -LiteralPath $appJarPath -Destination (Join-Path $AppDir $expectedJarName) -Force
+# Inspect the actual packaged JAR with the selected JDK's standard manifest parser.
+# JarFile/Manifest handle continuation lines and main-section attribute semantics;
+# no archive extraction or tracked source modification is needed.
+New-Item -ItemType Directory -Path $DiagnosticsDir -Force | Out-Null
+$manifestCheckSource = @'
+import java.util.jar.Attributes;
+import java.util.jar.JarFile;
+
+class VerifyJarImplementationVersion {
+    public static void main(String[] args) throws Exception {
+        try (var jar = new JarFile(args[0])) {
+            var manifest = jar.getManifest();
+            if (manifest == null) {
+                throw new IllegalStateException("Project JAR has no META-INF/MANIFEST.MF");
+            }
+            var actual = manifest.getMainAttributes().getValue(Attributes.Name.IMPLEMENTATION_VERSION);
+            if (!args[1].equals(actual)) {
+                throw new IllegalStateException("JAR Implementation-Version: expected " + args[1] + ", found " + actual);
+            }
+            System.out.println(actual);
+        }
+    }
+}
+'@
+$manifestCheckPath = Join-Path $DiagnosticsDir 'VerifyJarImplementationVersion.java'
+[System.IO.File]::WriteAllText($manifestCheckPath, $manifestCheckSource, (New-Object System.Text.UTF8Encoding($false)))
+$jarImplementationVersion = (Invoke-Tool -Label 'packaged JAR Implementation-Version validation' -FilePath $javaExe -Arguments @($manifestCheckPath, (Join-Path $AppDir $expectedJarName), $projectVersion)).Output.Trim()
+if ($jarImplementationVersion -cne $projectVersion) {
+    Fail ('the packaged JAR Implementation-Version does not equal the effective project version: ' + $jarImplementationVersion)
+}
+Write-Note ('JAR Implementation-Version: ' + $jarImplementationVersion + ' (selected JDK manifest parser; exact effective version)')
 foreach ($relative in $RuntimeDataFiles) {
     $source = Join-Path $RepoRoot $relative
     $destination = Join-Path $ImageRoot $relative
@@ -533,6 +564,7 @@ $worktreeState = 'clean'
 $buildInfo = New-Object 'System.Collections.Generic.List[string]'
 $buildInfo.Add('Product:         ' + $ProductName)
 $buildInfo.Add('Project version: ' + $projectVersion)
+$buildInfo.Add('JAR Implementation-Version: ' + $jarImplementationVersion)
 $buildInfo.Add('Git SHA:         ' + $gitSha)
 $buildInfo.Add('Git branch:      ' + $gitBranch)
 $buildInfo.Add('Git worktree:    ' + $worktreeState)
