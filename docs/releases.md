@@ -1,11 +1,19 @@
 # Windows releases
 
-Stage 9C implements release automation. The first intended prerelease is
-**v0.9.0-beta.1**, after independent review and merge. This document does not
-claim that tag or release exists. Stage 9D still qualifies the interactive EXE
-wizard, installed application, upgrade and uninstall experience on a clean
-Windows machine. Automated packaging and input-free smokes do not replace that
-qualification. Never press ARM during release validation.
+Stage 9C implements release automation. **v0.9.0-beta.1 was published** from
+commit `3389c368a5e255b4d19c3d9b1682c99df5cf72c6`. Its real public browser
+download/install checkpoint passed: EXE and asset/checksum/provenance verification,
+unsigned Authenticode, preserved Mark-of-the-Web, expected SmartScreen, successful
+per-user installation without UAC, static installed-layout/private-runtime validation,
+Start Menu integration and USERUNMANAGED Windows Installer context.
+
+The observed beta.1 installer UI was minimal (preparation/information gathering,
+then window closure), motivating Stage 9B.1 wizard hardening. **v0.9.0-beta.2 is
+intended** to qualify the new wizard and the real beta.1 -> beta.2 upgrade; beta.1
+must remain installed until then. Stage 9D full GTA qualification remains pending.
+Automated packaging, static UI inspection and input-free smokes do not visually
+prove the new wizard or replace real release qualification. Never press ARM
+during input-free release validation.
 
 ## Public tag policy
 
@@ -204,9 +212,10 @@ attempt matches the publishing attempt. Treat published releases as immutable;
 ship a new version for corrections. A changed source commit needs a separately
 reviewed tag/version decision.
 
-Stage 9C finishes at automation implementation and PR dry-run validation. The
+Stage 9B.1 finishes at installer UI implementation and PR dry-run validation. The
 next step is independent review of the exact PR head; do not merge or create
-`v0.9.0-beta.1` as part of implementation. After review and merge, a separate
-controlled prompt can authorize the first tag/release. Stage 9D then qualifies
-the shipped installer experience; signing, updates, telemetry, package managers,
-attestations, ARM64 and other-platform installers remain outside Stage 9C.
+`v0.9.0-beta.2` as part of implementation. After review and merge, a separate
+controlled prompt can authorize that tag/release and its first interactive wizard
+execution. Stage 9D then continues qualification of the shipped installer and GTA
+behavior; signing, updates, telemetry, package managers, attestations, ARM64 and
+other-platform installers remain outside this stage.

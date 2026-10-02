@@ -10,9 +10,8 @@
     EXE installer from the validated app-image and inspects the installer statically
     (MSI tables, upgrade identity, shortcut inventory) without executing it.
 
-    The installer itself is never launched by this script. Install and uninstall
-    validation use the generated MSI with documented msiexec switches; the
-    interactive EXE wizard itself remains unexercised until Stage 9D qualification.
+    Neither the installer nor its MSI is ever launched by this script. The
+    interactive wizard and real upgrade remain reserved for public qualification.
 
     Every generated artifact lives below the ignored target/ directory, so running
     this script must not modify a tracked file. It never installs Java or WiX and
@@ -77,6 +76,8 @@ $DiagnosticsDir = $Stage9BDir
 $RelocationRoot = Join-Path $TargetDir 'stage9b relocation check'
 $RelocationImage = Join-Path $RelocationRoot $ProductName
 $UpgradeUuidFile = Join-Path $RepoRoot 'packaging/windows/win-upgrade-uuid.txt'
+$UiResourceDir = Join-Path $RepoRoot 'packaging/windows/jpackage-resources'
+$PreparedResourceDir = Join-Path $Stage9BDir 'jpackage-resources'
 $Lf = [string][char]10
 $Cr = [string][char]13
 $Slash = [char]47
@@ -294,6 +295,48 @@ function Write-Diagnostics {
         New-Item -ItemType Directory -Path $DiagnosticsDir -Force | Out-Null
     }
     [System.IO.File]::WriteAllLines((Join-Path $DiagnosticsDir 'build.log'), $script:LogLines)
+}
+
+function Read-ExeManifest([string]$Path) {
+    # Load only PE resource data (DATAFILE | IMAGE_RESOURCE). Windows does not
+    # resolve imports or execute this module's entry point under these flags.
+    # Read manifest ID 1 / RT_MANIFEST (24), not strings in the embedded MSI.
+    Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public static class Stage9BPeResources {
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    public static extern IntPtr LoadLibraryEx(string path, IntPtr file, uint flags);
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    public static extern IntPtr FindResource(IntPtr module, IntPtr name, IntPtr type);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern uint SizeofResource(IntPtr module, IntPtr resource);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern IntPtr LoadResource(IntPtr module, IntPtr resource);
+    [DllImport("kernel32.dll")]
+    public static extern IntPtr LockResource(IntPtr resource);
+    [DllImport("kernel32.dll")]
+    public static extern bool FreeLibrary(IntPtr module);
+}
+'@
+    $module = [Stage9BPeResources]::LoadLibraryEx($Path, [IntPtr]::Zero, 0x22)
+    if ($module -eq [IntPtr]::Zero) { Fail 'could not open installer PE resources as data' }
+    try {
+        $resource = [Stage9BPeResources]::FindResource($module, [IntPtr]1, [IntPtr]24)
+        if ($resource -eq [IntPtr]::Zero) {
+            # The pinned stock msiwrapper has no RT_MANIFEST at all. Distinguish
+            # ERROR_RESOURCE_TYPE_NOT_FOUND from an unexpected ID/read error.
+            if ([System.Runtime.InteropServices.Marshal]::GetLastWin32Error() -eq 1813) { return '' }
+            Fail 'installer PE manifest resource cannot be read at the expected ID'
+        }
+        $size = [Stage9BPeResources]::SizeofResource($module, $resource)
+        $loaded = [Stage9BPeResources]::LoadResource($module, $resource)
+        $data = [Stage9BPeResources]::LockResource($loaded)
+        if ($size -eq 0 -or $data -eq [IntPtr]::Zero) { Fail 'installer PE manifest resource is unreadable' }
+        $bytes = New-Object byte[] $size
+        [System.Runtime.InteropServices.Marshal]::Copy($data, $bytes, 0, $size)
+        return [System.Text.Encoding]::UTF8.GetString($bytes)
+    } finally { [void][Stage9BPeResources]::FreeLibrary($module) }
 }
 
 trap {
@@ -823,8 +866,43 @@ Invoke-WithScrubbedJavaEnvironment {
 Write-Step 'Build the EXE installer from the validated app-image'
 Remove-WithinTarget $JpackageTempExe
 Remove-WithinTarget $InstallerDir
-$installerArgs = @('--type', 'exe', '--verbose', '--dest', $InstallerDir, '--name', $ProductName, '--app-version', $AppVersion, '--vendor', $Vendor, '--description', 'Casino fingerprint solver operator for GTA V Enhanced (2560x1440)', '--copyright', $Vendor, '--app-image', $JpackageAppImage, '--win-per-user-install', '--win-menu', '--win-menu-group', $MenuGroup, '--win-upgrade-uuid', $upgradeUuid, '--temp', $JpackageTempExe)
-Invoke-Tool -Label 'jpackage exe installer' -FilePath $jpackageExe -Arguments $installerArgs -WorkingDirectory $Stage9BDir | Out-Null
+# These resources were captured from this exact toolchain, not inferred from
+# another JDK's generated WiX. Review a fresh baseline before changing versions.
+if ($javaRuntimeVersion -cne '21.0.6+7-LTS' -or $jpackageVersion -cne '21.0.6' -or $wixVersion -cne '3.14.1.8722') {
+    Fail 'the installer UI override requires its reviewed Temurin 21.0.6+7 / WiX 3.14.1.8722 baseline'
+}
+$resourceNames = @('ui.wxf', 'MsiInstallerStrings_en.wxl')
+$actualResources = @(Get-ChildItem -LiteralPath $UiResourceDir -File | Select-Object -ExpandProperty Name)
+if (@(Compare-Object $resourceNames $actualResources).Count -ne 0) {
+    Fail 'the reviewed installer resource set must contain only ui.wxf and MsiInstallerStrings_en.wxl'
+}
+New-Item -ItemType Directory -Path $PreparedResourceDir -Force | Out-Null
+foreach ($resourceName in $resourceNames) {
+    Copy-Item -LiteralPath (Join-Path $UiResourceDir $resourceName) -Destination $PreparedResourceDir
+}
+$preparedUiPath = Join-Path $PreparedResourceDir 'ui.wxf'
+$uiTemplate = [System.IO.File]::ReadAllText($preparedUiPath)
+$versionToken = '@SOLVER_APPLICATION_VERSION@'
+if ([regex]::Matches($uiTemplate, [regex]::Escape($versionToken)).Count -ne 1) {
+    Fail 'the reviewed UI must contain exactly one application-version token'
+}
+$preparedUi = $uiTemplate.Replace($versionToken, [System.Security.SecurityElement]::Escape($buildInfoProjectVersion))
+[System.IO.File]::WriteAllText($preparedUiPath, $preparedUi, (New-Object System.Text.UTF8Encoding($false)))
+$installerArgs = @('--type', 'exe', '--verbose', '--dest', $InstallerDir, '--name', $ProductName, '--app-version', $AppVersion, '--vendor', $Vendor, '--description', 'Casino fingerprint solver operator for GTA V Enhanced (2560x1440)', '--copyright', $Vendor, '--app-image', $JpackageAppImage, '--win-per-user-install', '--win-dir-chooser', '--resource-dir', $PreparedResourceDir, '--win-menu', '--win-menu-group', $MenuGroup, '--win-upgrade-uuid', $upgradeUuid, '--temp', $JpackageTempExe)
+$installerBuild = Invoke-Tool -Label 'jpackage exe installer' -FilePath $jpackageExe -Arguments $installerArgs -WorkingDirectory $Stage9BDir
+foreach ($resourceName in $resourceNames) {
+    $customLogPattern = 'Using custom package resource[^\r\n]*\(loaded from ' + [regex]::Escape($resourceName) + '\)'
+    if ($installerBuild.Output -notmatch $customLogPattern) {
+        Fail ('jpackage did not acknowledge the custom resource: ' + $resourceName)
+    }
+    $generatedResource = Join-Path $JpackageTempExe ('config/' + $resourceName)
+    if (-not (Test-Path -LiteralPath $generatedResource) -or
+        (Get-FileHash -LiteralPath $generatedResource -Algorithm SHA256).Hash -cne
+        (Get-FileHash -LiteralPath (Join-Path $PreparedResourceDir $resourceName) -Algorithm SHA256).Hash) {
+        Fail ('jpackage did not retain the exact prepared resource: ' + $resourceName)
+    }
+    Write-Note ('custom resource consumed and byte-verified: ' + $resourceName)
+}
 $installerName = $ProductName + '-' + $AppVersion + '.exe'
 $installerPath = Join-Path $InstallerDir $installerName
 if (-not (Test-Path -LiteralPath $installerPath)) {
@@ -835,6 +913,24 @@ $installerSha = (Get-FileHash -LiteralPath $installerPath -Algorithm SHA256).Has
 Write-Note ('installer: ' + $installerName)
 Write-Note ('installer bytes: ' + $installerBytes)
 Write-Note ('installer SHA-256: ' + $installerSha)
+$installerSignature = Get-AuthenticodeSignature -LiteralPath $installerPath
+if ($installerSignature.Status -ne 'NotSigned') { Fail 'the development/release installer must remain unsigned' }
+Write-Note 'installer Authenticode: NotSigned'
+# Inspect only the EXE's actual manifest resource without invoking the EXE.
+$installerManifestText = Read-ExeManifest $installerPath
+if ($installerManifestText) {
+    [System.IO.File]::WriteAllText((Join-Path $DiagnosticsDir 'installer.manifest'), $installerManifestText)
+    $installerManifest = [xml]$installerManifestText
+    $executionLevels = @($installerManifest.SelectNodes('//*[local-name()="requestedExecutionLevel"]'))
+    if ($executionLevels.Count -ne 1 -or $executionLevels[0].GetAttribute('level') -cne 'asInvoker' -or
+        $executionLevels[0].GetAttribute('uiAccess') -cne 'false') {
+        Fail 'an installer EXE manifest must request asInvoker only'
+    }
+    Write-Note 'installer EXE manifest: asInvoker (static, never executed)'
+} else {
+    [System.IO.File]::WriteAllText((Join-Path $DiagnosticsDir 'installer-manifest.txt'), 'No RT_MANIFEST resource in the stock jpackage EXE wrapper. No elevation manifest added.')
+    Write-Note 'stock jpackage EXE wrapper: no RT_MANIFEST resource; no elevation manifest added'
+}
 
 # ---------------------------------------------------------------------------
 # Step 13: static installer inspection (the installer is never executed here)
@@ -936,6 +1032,12 @@ if ($installDirParent -ne 'LocalAppDataFolder') {
     Fail ('per-user installation must root at LocalAppDataFolder, found: ' + $installDirParent)
 }
 Write-Note 'install location roots at LocalAppDataFolder (per-user, no administrator rights)'
+$uiInspection = Join-Path $ScriptDir 'test-windows-installer-ui.ps1'
+Invoke-Tool -Label 'actual MSI UI contract and negative tests' -FilePath $stage9AHost -Arguments @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $uiInspection, '-MsiPath', $msiPath, '-ApplicationVersion', $buildInfoProjectVersion, '-EvidencePath', (Join-Path $DiagnosticsDir 'msi-ui-tables.json'), '-SelfTest') | Out-Null
+Write-Note 'MSI UI contract: PASS (actual tables); 16 negative tests passed; evidence: msi-ui-tables.json'
+foreach ($resourceName in @('ui.wxf', 'MsiInstallerStrings_en.wxl', 'overrides.wxi', 'InstallDirNotEmptyDlg.wxs')) {
+    Copy-Item -LiteralPath (Join-Path $JpackageTempExe ('config/' + $resourceName)) -Destination $DiagnosticsDir -Force
+}
 $generatedWxs = Join-Path $JpackageTempExe 'config/main.wxs'
 if (Test-Path -LiteralPath $generatedWxs) {
     Copy-Item -LiteralPath $generatedWxs -Destination (Join-Path $DiagnosticsDir 'main.wxs') -Force
@@ -998,7 +1100,5 @@ foreach ($line in $summary) {
     Write-Host ('  ' + $line)
 }
 Write-Host ''
-Write-Host 'Install/uninstall validation uses the generated MSI with documented msiexec switches;' -ForegroundColor Yellow
-Write-Host 'the interactive EXE wizard itself remains unexercised (Stage 9D qualification).' -ForegroundColor Yellow
-Write-Host '  2. Launch "GTA Casino Fingerprint Solver" from the Start Menu (no console window).' -ForegroundColor Yellow
-Write-Host '  3. Never press ARM during validation: startup must stay DISARMED with zero input.' -ForegroundColor Yellow
+Write-Host 'Neither the installer nor its MSI was executed. Visual wizard and upgrade proof' -ForegroundColor Yellow
+Write-Host 'remain reserved for public beta.2 qualification after independent review and merge.' -ForegroundColor Yellow
